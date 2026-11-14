@@ -9,21 +9,27 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import strategy as st
-from .broker import AlpacaBroker, SimBroker
-from .market import AlpacaData, YahooData, now_ny, NY
+from .broker import AlgoLabBroker, SimBroker
+from .market import YahooData, AlgoLabData, now_tr
 
 JOURNAL_FIELDS = ["zaman", "mod", "hisse", "islem", "adet", "fiyat", "ucret",
                   "kar_zarar", "sebep", "sure_dk"]
 
 
+def algolab_client(cfg):
+    from .algolab import AlgoLab
+    key = os.environ.get("ALGOLAB_API_KEY")
+    if not key:
+        raise SystemExit("ALGOLAB_API_KEY .env dosyasında olmalı.")
+    return AlgoLab(key, Path(cfg.state_dir) / "algolab_oturum.json")
+
+
 def make_clients(cfg):
     if cfg.mode == "sim":
-        return SimBroker(cfg), YahooData(cfg.bar_minutes)
-    key, secret = os.environ.get("ALPACA_API_KEY"), os.environ.get("ALPACA_SECRET_KEY")
-    if not key or not secret:
-        raise SystemExit("ALPACA_API_KEY ve ALPACA_SECRET_KEY .env dosyasında olmalı.")
-    broker = AlpacaBroker(cfg, key, secret, paper=(cfg.mode == "paper"))
-    return broker, AlpacaData(key, secret, cfg.bar_minutes)
+        return SimBroker(cfg), YahooData(cfg)
+    client = algolab_client(cfg)
+    client.load_session()
+    return AlgoLabBroker(cfg, client), AlgoLabData(cfg, client)
 
 
 class State:
@@ -66,6 +72,8 @@ class Bot:
         self.cfg = cfg
         self.broker, self.data = make_clients(cfg)
         self.state = State(cfg)
+        self._bars = {}          # hisse -> kapanmış mumlar (her yeni mumda yenilenir)
+        self._bars_key = None
 
     # ---------- yardımcılar ----------
     def _held_minutes(self, pos, now):
@@ -102,11 +110,11 @@ class Bot:
                         "fiyat": round(fill.price, 4), "ucret": round(fill.fee, 4),
                         "kar_zarar": round(pnl, 2), "sebep": reason, "sure_dk": round(held, 1)})
         sign = "+" if pnl >= 0 else ""
-        print(f"  SAT  {sym:<5} {fill.qty:g} adet @ {fill.price:.2f}  {sign}{pnl:.2f} $  ({reason}, {held:.0f} dk)")
+        print(f"  SAT  {sym:<6} {fill.qty:g} lot @ {fill.price:.2f}  {sign}{pnl:.2f} TL  ({reason}, {held:.0f} dk)")
         return True
 
     def open_position(self, sym, price, sig, now):
-        qty = math.floor(self.cfg.position_size_usd / price)
+        qty = math.floor(self.cfg.position_size / price)
         if qty < 1:
             return False
         fill = self.broker.buy(sym, qty, price)
@@ -122,7 +130,7 @@ class Bot:
                         "fiyat": round(fill.price, 4), "ucret": round(fill.fee, 4),
                         "kar_zarar": "", "sebep": f"dip %{sig['dip']} rsi {sig['rsi']}",
                         "sure_dk": ""})
-        print(f"  AL   {sym:<5} {fill.qty:g} adet @ {fill.price:.2f}  "
+        print(f"  AL   {sym:<6} {fill.qty:g} lot @ {fill.price:.2f}  "
               f"(düşüş %{sig['dip']}, RSI {sig['rsi']}; hedef {st.target_price(fill.price, self.cfg):.2f}, "
               f"stop {st.stop_price(fill.price, self.cfg):.2f})")
         return True
@@ -135,15 +143,16 @@ class Bot:
     # ---------- tek tur ----------
     def step(self):
         cfg, d = self.cfg, self.state.d
-        now = now_ny()
+        now = now_tr()
         is_open, open_, close = self.broker.clock()
         daily = self.state.today(now)
         if not is_open:
             return False
+        self.broker.keep_alive()
 
-        symbols = sorted(set(cfg.symbols) | set(d["positions"]))
-        snap = self.data.snapshot(symbols, now)
-        prices = {s: v[1] for s, v in snap.items()}
+        # Açık pozisyonların fiyatı her turda, 100 hissenin mumları ise
+        # her yeni 5 dk mum kapanınca bir kez çekilir.
+        prices = self.data.prices(list(d["positions"])) if d["positions"] else {}
 
         # 1) Açık pozisyonlar: tepe güncelle, çıkış kurallarını uygula
         mins_to_close = (close - now).total_seconds() / 60
@@ -163,19 +172,23 @@ class Bot:
 
         # 2) Zarar limitleri
         unreal = self._unrealized(prices)
-        if d["realized_pnl"] + unreal <= -cfg.max_total_loss_usd and d["halted"] != "toplam_limit":
-            print(f"  !!! Toplam zarar limiti ({cfg.max_total_loss_usd} $) aşıldı. Her şey satılıyor, bot DURDU.")
+        if d["realized_pnl"] + unreal <= -cfg.max_total_loss and d["halted"] != "toplam_limit":
+            print(f"  !!! Toplam zarar limiti ({cfg.max_total_loss:.0f} TL) aşıldı. Her şey satılıyor, bot DURDU.")
             self.flatten_all(prices, "toplam_limit", now)
             d["halted"] = "toplam_limit"
-        elif daily["pnl"] + unreal <= -cfg.max_daily_loss_usd and not d["halted"]:
-            print(f"  !! Günlük zarar limiti ({cfg.max_daily_loss_usd} $) aşıldı. Bugünlük bu kadar.")
+        elif daily["pnl"] + unreal <= -cfg.max_daily_loss and not d["halted"]:
+            print(f"  !! Günlük zarar limiti ({cfg.max_daily_loss:.0f} TL) aşıldı. Bugünlük bu kadar.")
             self.flatten_all(prices, "gunluk_limit", now)
             d["halted"] = "gunluk_limit"
         self.state.save()
 
         # 3) Yeni alımlar
         if self._may_enter(now, open_, close):
-            self._enter(snap, prices, now)
+            key = (now - open_).total_seconds() // (cfg.bar_minutes * 60)
+            if key != self._bars_key:
+                self._bars = self.data.bars(cfg.symbols, now)
+                self._bars_key = key
+                self._enter(self._bars, now)
 
         self._status(prices, now)
         return True
@@ -191,41 +204,41 @@ class Bot:
             return False
         return len(d["positions"]) < cfg.max_positions
 
-    def _enter(self, snap, prices, now):
+    def _enter(self, bars_by_sym, now):
         cfg, d = self.cfg, self.state.d
-        acct = self.broker.account(prices)
-        if cfg.respect_pdt and cfg.mode != "sim" and acct["equity"] < 25000 \
-                and acct["daytrade_count"] >= 3:
-            print("  (PDT: 5 iş gününde 3 gün içi işlem sınırı dolu, yeni alım yok)")
-            return
         invested = sum(p["qty"] * p["entry_price"] for p in d["positions"].values())
-        budget = cfg.budget_usd + min(0.0, d["realized_pnl"])  # zarar ettikçe bütçe küçülür
-        cash = acct.get("buying_power", acct["cash"]) if cfg.mode != "sim" else acct["cash"]
+        budget = cfg.budget + min(0.0, d["realized_pnl"])  # zarar ettikçe bütçe küçülür
 
         cands = []
-        for sym, (bars, px) in snap.items():
-            if sym in d["positions"]:
+        for sym, bars in bars_by_sym.items():
+            if sym in d["positions"] or not bars:
                 continue
             last = d["last_exit"].get(sym)
             if last and now - datetime.fromisoformat(last) < timedelta(minutes=cfg.cooldown_minutes):
                 continue
-            # sinyal sadece bugünün mumlarıyla + önceki günlerin geçmişiyle hesaplanır
             sig = st.entry_signal(bars, cfg)
             if sig:
-                cands.append((sig["score"], sym, px, sig))
+                cands.append((sig["score"], sym, sig))
+        if not cands:
+            return
         cands.sort(reverse=True)
+        cash = self.broker.cash()
 
-        for _, sym, px, sig in cands:
+        for _, sym, sig in cands:
             if len(d["positions"]) >= cfg.max_positions:
                 break
-            if invested + cfg.position_size_usd > budget or cfg.position_size_usd > cash:
+            if invested + cfg.position_size > budget or cfg.position_size > cash:
                 break
             # Kullanıcının kendi elindeki hisselere dokunma.
             if cfg.mode != "sim" and self.broker.held_qty(sym) > 0:
                 continue
+            px = self.data.prices([sym]).get(sym)
+            if not px:
+                continue
             if self.open_position(sym, px, sig, now):
-                invested += d["positions"][sym]["qty"] * d["positions"][sym]["entry_price"]
-                cash -= d["positions"][sym]["qty"] * d["positions"][sym]["entry_price"]
+                cost = d["positions"][sym]["qty"] * d["positions"][sym]["entry_price"]
+                invested += cost
+                cash -= cost
 
     def _status(self, prices, now):
         d = self.state.d
@@ -236,14 +249,14 @@ class Bot:
                 g = (prices[sym] / p["entry_price"] - 1) * 100
                 parts.append(f"{sym} {g:+.2f}%")
         halted = f"  [DURDU: {d['halted']}]" if d["halted"] else ""
-        print(f"[{now:%H:%M:%S}] {self.broker.name} | gerçekleşen {d['realized_pnl']:+.2f} $ | "
-              f"bugün {d['daily']['pnl']:+.2f} $ | açık {unreal:+.2f} $ | "
+        print(f"[{now:%H:%M:%S}] {self.broker.name} | gerçekleşen {d['realized_pnl']:+.2f} TL | "
+              f"bugün {d['daily']['pnl']:+.2f} TL | açık {unreal:+.2f} TL | "
               f"{', '.join(parts) or 'pozisyon yok'}{halted}", flush=True)
 
     # ---------- döngü ----------
     def run(self):
         cfg = self.cfg
-        print(f"Borsa botu başladı. Mod: {self.broker.name}, bütçe {cfg.budget_usd:.0f} $, "
+        print(f"BIST botu başladı. Mod: {self.broker.name}, bütçe {cfg.budget:.0f} TL, "
               f"kâr al %{cfg.take_profit_pct}, zarar kes %{cfg.stop_loss_pct}, "
               f"tepe kilidi %{cfg.trail_activate_pct}/{int(cfg.trail_keep_ratio*100)}%")
         if cfg.mode == "live":
@@ -256,9 +269,9 @@ class Bot:
                 print(f"  ! hata: {e}", flush=True)
                 active = True
             if not active:
-                stamp = now_ny().strftime("%Y-%m-%d %H")
+                stamp = now_tr().strftime("%Y-%m-%d %H")
                 if idle_logged != stamp:
-                    print(f"[{now_ny():%Y-%m-%d %H:%M}] Borsa kapalı, bekliyorum...", flush=True)
+                    print(f"[{now_tr():%Y-%m-%d %H:%M}] Borsa kapalı, bekliyorum...", flush=True)
                     idle_logged = stamp
                 time.sleep(60)
             else:

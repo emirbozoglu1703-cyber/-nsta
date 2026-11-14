@@ -1,48 +1,64 @@
-"""Piyasa verisi (Yahoo / Alpaca) ve borsa saatleri."""
+"""Piyasa verisi (Yahoo / AlgoLab) ve BIST seans saatleri."""
 
-import os
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 
 import requests
 
 from .strategy import Bar
 
-NY = ZoneInfo("America/New_York")
+TZ = ZoneInfo("Europe/Istanbul")
 UA = {"User-Agent": "Mozilla/5.0 (borsa-bot)"}
 
 
-def now_ny():
-    return datetime.now(NY)
+def now_tr():
+    return datetime.now(TZ)
 
 
-class SimpleClock:
-    """Alpaca'sız saat: hafta içi 09:30-16:00 New York. Resmi tatilleri bilmez."""
+def hm(s):
+    h, m = s.split(":")
+    return dtime(int(h), int(m))
+
+
+class SessionClock:
+    """BIST sürekli işlem seansı: hafta içi session_open-session_close.
+    Resmi tatilleri bilmez; tatilde yeni mum gelmediği için bot işlem açmaz."""
+
+    def __init__(self, cfg):
+        self.open_t, self.close_t = hm(cfg.session_open), hm(cfg.session_close)
 
     def session(self, now=None):
-        now = now or now_ny()
-        open_ = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        now = now or now_tr()
+        open_ = now.replace(hour=self.open_t.hour, minute=self.open_t.minute, second=0, microsecond=0)
+        close = now.replace(hour=self.close_t.hour, minute=self.close_t.minute, second=0, microsecond=0)
         is_open = now.weekday() < 5 and open_ <= now < close
         return is_open, open_, close
 
+    def in_session(self, t):
+        return self.open_t <= t.time() < self.close_t
+
+
+def closed_only(bars, now, bar_minutes):
+    return [b for b in bars if b.t + timedelta(minutes=bar_minutes) <= now]
+
 
 class YahooData:
-    """Ücretsiz, anahtarsız. Sanal (sim) mod ve backtest için."""
+    """Ücretsiz, hesap gerektirmez. Sanal mod ve geçmiş testi için.
+    Not: Yahoo'nun BIST verisi gecikmeli olabilir; gerçek para modunda
+    AlgoLab verisi kullanılır."""
 
-    URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
+    URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}.IS"
 
-    def __init__(self, bar_minutes=5):
-        self.interval = f"{bar_minutes}m"
-        self.bar_minutes = bar_minutes
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.clock = SessionClock(cfg)
         self.s = requests.Session()
         self.s.headers.update(UA)
 
     def _chart(self, sym, range_):
         r = self.s.get(self.URL.format(sym=sym),
-                       params={"interval": self.interval, "range": range_,
-                               "includePrePost": "false"}, timeout=20)
+                       params={"interval": f"{self.cfg.bar_minutes}m", "range": range_},
+                       timeout=20)
         r.raise_for_status()
         res = r.json()["chart"]["result"][0]
         q = res["indicators"]["quote"][0]
@@ -51,82 +67,73 @@ class YahooData:
             o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
             if None in (o, h, l, c):
                 continue
-            bars.append(Bar(datetime.fromtimestamp(ts, NY), o, h, l, c, q["volume"][i] or 0))
-        price = res["meta"].get("regularMarketPrice")
-        return bars, price
+            b = Bar(datetime.fromtimestamp(ts, TZ), o, h, l, c, q["volume"][i] or 0)
+            if self.clock.in_session(b.t):
+                bars.append(b)
+        return bars, res["meta"].get("regularMarketPrice")
 
-    def bars(self, sym, range_="5d"):
-        bars, _ = self._chart(sym, range_)
-        return bars
+    def history(self, sym, range_="60d"):
+        return self._chart(sym, range_)[0]
 
-    def snapshot(self, symbols, now=None):
-        """{sym: (kapanmış_mumlar, son_fiyat)}"""
-        now = now or now_ny()
+    def bars(self, symbols, now):
         out = {}
         for sym in symbols:
             try:
-                bars, price = self._chart(sym, "5d")
+                out[sym] = closed_only(self._chart(sym, "5d")[0], now, self.cfg.bar_minutes)
             except Exception as e:  # tek hisse hatası botu durdurmasın
                 print(f"  ! {sym} verisi alınamadı: {e}")
-                continue
-            closed = [b for b in bars if b.t + timedelta(minutes=self.bar_minutes) <= now]
-            if closed and price:
-                out[sym] = (closed, float(price))
         return out
 
-
-class AlpacaData:
-    """Alpaca piyasa verisi (paper/live). Ücretsiz planda IEX verisi."""
-
-    URL = "https://data.alpaca.markets/v2/stocks"
-
-    def __init__(self, key, secret, bar_minutes=5, feed=None):
-        self.s = requests.Session()
-        self.s.headers.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
-        self.bar_minutes = bar_minutes
-        self.feed = feed or os.environ.get("ALPACA_DATA_FEED", "iex")
-
-    def snapshot(self, symbols, now=None):
-        now = now or now_ny()
-        start = (now - timedelta(days=5)).astimezone(timezone.utc).isoformat()
-        bars = {s: [] for s in symbols}
-        token = None
-        while True:
-            params = {"symbols": ",".join(symbols), "timeframe": f"{self.bar_minutes}Min",
-                      "start": start, "limit": 10000, "feed": self.feed,
-                      "adjustment": "raw"}
-            if token:
-                params["page_token"] = token
-            r = self.s.get(f"{self.URL}/bars", params=params, timeout=20)
-            r.raise_for_status()
-            j = r.json()
-            for sym, lst in (j.get("bars") or {}).items():
-                for b in lst:
-                    t = datetime.fromisoformat(b["t"].replace("Z", "+00:00")).astimezone(NY)
-                    bars[sym].append(Bar(t, b["o"], b["h"], b["l"], b["c"], b["v"]))
-            token = j.get("next_page_token")
-            if not token:
-                break
-        r = self.s.get(f"{self.URL}/trades/latest",
-                       params={"symbols": ",".join(symbols), "feed": self.feed}, timeout=20)
-        r.raise_for_status()
-        latest = {s: t["p"] for s, t in (r.json().get("trades") or {}).items()}
+    def prices(self, symbols):
         out = {}
         for sym in symbols:
-            closed = [b for b in bars[sym]
-                      if b.t + timedelta(minutes=self.bar_minutes) <= now]
-            closed = [b for b in closed if b.t.time() >= datetime.strptime("09:30", "%H:%M").time()
-                      and b.t.time() < datetime.strptime("16:00", "%H:%M").time()]
-            if closed and sym in latest:
-                out[sym] = (closed, float(latest[sym]))
+            try:
+                p = self._chart(sym, "1d")[1]
+                if p:
+                    out[sym] = float(p)
+            except Exception as e:
+                print(f"  ! {sym} fiyatı alınamadı: {e}")
         return out
 
 
-def retry(fn, tries=3, wait=2):
-    for i in range(tries):
-        try:
-            return fn()
-        except requests.RequestException:
-            if i == tries - 1:
-                raise
-            time.sleep(wait * (i + 1))
+class AlgoLabData:
+    """Gerçek para modunda veri: AlgoLab mumları ve son fiyat."""
+
+    def __init__(self, cfg, client):
+        self.cfg, self.c = cfg, client
+        self.clock = SessionClock(cfg)
+
+    def _parse_t(self, s):
+        s = s.replace("Z", "+00:00")
+        t = datetime.fromisoformat(s)
+        return t.replace(tzinfo=TZ) if t.tzinfo is None else t.astimezone(TZ)
+
+    def bars(self, symbols, now):
+        from .algolab import num
+        out = {}
+        for sym in symbols:
+            try:
+                rows = self.c.candles(sym, self.cfg.bar_minutes)
+            except Exception as e:
+                print(f"  ! {sym} mumları alınamadı: {e}")
+                continue
+            bars = []
+            for r in rows:
+                b = Bar(self._parse_t(r["date"]), num(r["open"]), num(r["high"]),
+                        num(r["low"]), num(r["close"]), num(r.get("volume")))
+                if self.clock.in_session(b.t):
+                    bars.append(b)
+            bars.sort(key=lambda b: b.t)
+            out[sym] = closed_only(bars, now, self.cfg.bar_minutes)
+        return out
+
+    def prices(self, symbols):
+        out = {}
+        for sym in symbols:
+            try:
+                p = self.c.last_price(sym)
+                if p > 0:
+                    out[sym] = p
+            except Exception as e:
+                print(f"  ! {sym} fiyatı alınamadı: {e}")
+        return out

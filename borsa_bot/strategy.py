@@ -102,12 +102,16 @@ def trail_price(entry_price, peak_price, cfg):
     return entry_price * (1 + peak_gain * cfg.trail_keep_ratio)
 
 
+def commission(price, qty, cfg):
+    """Bir alış ya da satışın komisyonu (TL)."""
+    if qty <= 0:
+        return 0.0
+    return max(price * qty * cfg.commission_pct / 100, cfg.commission_min)
+
+
 def sell_fees(price, qty, cfg):
-    notional = price * qty
-    taf = min(qty * cfg.taf_per_share, 8.30)
-    return (cfg.commission_per_trade_usd + notional * cfg.commission_pct / 100
-            + notional * cfg.sec_fee_rate + taf)
+    return commission(price, qty, cfg)
 
 
 def buy_fees(price, qty, cfg):
-    return cfg.commission_per_trade_usd + price * qty * cfg.commission_pct / 100
+    return commission(price, qty, cfg)

@@ -1,13 +1,9 @@
-"""Aracı kurum bağlantısı: sanal (SimBroker) veya Alpaca (paper/live)."""
+"""Aracı kurum: sanal (SimBroker) veya Deniz Yatırım AlgoLab (gerçek para)."""
 
 import json
-import time
-import uuid
 from pathlib import Path
 
-import requests
-
-from .market import SimpleClock, now_ny
+from .market import SessionClock, now_tr
 from .strategy import buy_fees, sell_fees
 
 
@@ -17,18 +13,18 @@ class Fill:
 
 
 class SimBroker:
-    """Videodaki 'sanal 5000 dolar' testi: gerçek borsaya hiç bağlanmaz."""
+    """Videodaki 'sanal para' testi: gerçek borsaya hiç bağlanmaz."""
 
     name = "SANAL"
 
     def __init__(self, cfg):
         self.cfg = cfg
         self.path = Path(cfg.state_dir) / "sim_hesap.json"
-        self.clock_ = SimpleClock()
+        self.clock_ = SessionClock(cfg)
         if self.path.exists():
             self.acct = json.loads(self.path.read_text())
         else:
-            self.acct = {"cash": cfg.budget_usd, "positions": {}}
+            self.acct = {"cash": cfg.budget, "positions": {}}
             self._save()
 
     def _save(self):
@@ -36,13 +32,13 @@ class SimBroker:
         self.path.write_text(json.dumps(self.acct, indent=2))
 
     def clock(self):
-        return self.clock_.session(now_ny())
+        return self.clock_.session(now_tr())
 
-    def account(self, prices=None):
-        prices = prices or {}
-        eq = self.acct["cash"] + sum(q * prices.get(s, 0) for s, q in self.acct["positions"].items())
-        return {"cash": self.acct["cash"], "equity": eq, "daytrade_count": 0,
-                "pattern_day_trader": False}
+    def keep_alive(self):
+        pass
+
+    def cash(self):
+        return self.acct["cash"]
 
     def held_qty(self, sym):
         return self.acct["positions"].get(sym, 0)
@@ -74,81 +70,45 @@ class SimBroker:
         return Fill(qty, px, fee)
 
 
-class AlpacaBroker:
-    """Alpaca Trading API. paper=True sanal hesap, False GERÇEK PARA."""
+class AlgoLabBroker:
+    """GERÇEK PARA. Piyasa emri gönderir, dolmasını bekler."""
 
-    def __init__(self, cfg, key, secret, paper=True):
-        self.cfg = cfg
-        self.paper = paper
-        self.name = "ALPACA-SANAL" if paper else "ALPACA-GERÇEK"
-        self.base = ("https://paper-api.alpaca.markets" if paper
-                     else "https://api.alpaca.markets") + "/v2"
-        self.s = requests.Session()
-        self.s.headers.update({"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
+    name = "DENIZ-ALGOLAB (GERÇEK)"
 
-    def _get(self, path, **params):
-        r = self.s.get(self.base + path, params=params, timeout=20)
-        r.raise_for_status()
-        return r.json()
+    def __init__(self, cfg, client):
+        self.cfg, self.c = cfg, client
+        self.clock_ = SessionClock(cfg)
 
     def clock(self):
-        from datetime import datetime
-        from .market import NY
-        c = self._get("/clock")
-        ts = lambda s: datetime.fromisoformat(s).astimezone(NY)
-        now = now_ny()
-        # Gün içindeysek bugünün açılış/kapanışını, değilse sıradakileri döner.
-        close = ts(c["next_close"])
-        open_ = close.replace(hour=9, minute=30) if c["is_open"] else ts(c["next_open"])
-        return c["is_open"], open_, close
+        return self.clock_.session(now_tr())
 
-    def account(self, prices=None):
-        a = self._get("/account")
-        if a.get("trading_blocked") or a.get("account_blocked"):
-            raise RuntimeError("Alpaca hesabı işlem yapmaya kapalı")
-        return {"cash": float(a["cash"]), "equity": float(a["equity"]),
-                "buying_power": float(a["buying_power"]),
-                "daytrade_count": int(a.get("daytrade_count", 0)),
-                "pattern_day_trader": bool(a.get("pattern_day_trader"))}
+    def keep_alive(self):
+        self.c.keep_alive()
+
+    def cash(self):
+        return self.c.cash()
 
     def held_qty(self, sym):
-        r = self.s.get(f"{self.base}/positions/{sym}", timeout=20)
-        if r.status_code == 404:
-            return 0
-        r.raise_for_status()
-        return float(r.json()["qty"])
+        return self.c.positions().get(sym, 0)
 
     def _order(self, sym, qty, side):
-        body = {"symbol": sym, "qty": str(qty), "side": side, "type": "market",
-                "time_in_force": "day", "client_order_id": f"bot-{uuid.uuid4().hex[:20]}"}
-        r = self.s.post(f"{self.base}/orders", json=body, timeout=20)
-        if r.status_code >= 400:
-            print(f"  ! {side} emri reddedildi ({sym}): {r.status_code} {r.text[:200]}")
+        try:
+            oid = self.c.send_market_order(sym, side, qty)
+        except Exception as e:
+            print(f"  ! {side} emri gönderilemedi ({sym}): {e}")
             return None
-        oid = r.json()["id"]
-        o = None
-        for _ in range(30):  # en fazla ~30 sn dolmasını bekle
-            o = self._get(f"/orders/{oid}")
-            if o["status"] in ("filled", "canceled", "expired", "rejected"):
-                break
-            time.sleep(1)
-        if o["status"] not in ("filled", "canceled", "expired", "rejected"):
-            self.s.delete(f"{self.base}/orders/{oid}", timeout=20)
-            time.sleep(1)
-            o = self._get(f"/orders/{oid}")
-        filled = float(o.get("filled_qty") or 0)
-        if filled <= 0:
-            print(f"  ! {side} emri dolmadı ({sym}): {o['status']}")
+        filled, px = self.c.wait_fill(oid)
+        if filled <= 0 or px <= 0:
+            print(f"  ! {side} emri dolmadı ({sym}, ref {oid})")
             return None
-        px = float(o["filled_avg_price"])
-        fee = sell_fees(px, filled, self.cfg) if side == "sell" else buy_fees(px, filled, self.cfg)
+        fee = sell_fees(px, filled, self.cfg) if side == "SELL" else buy_fees(px, filled, self.cfg)
         return Fill(filled, px, fee)
 
     def buy(self, sym, qty, price):
-        return self._order(sym, qty, "buy")
+        return self._order(sym, qty, "BUY")
 
     def sell(self, sym, qty, price):
         qty = min(qty, self.held_qty(sym))
         if qty <= 0:
             return None
-        return self._order(sym, qty, "sell")
+        return self._order(sym, qty, "SELL")

@@ -5,37 +5,43 @@ import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-DEFAULT_SYMBOLS = [
-    # Çok işlem gören, makas (spread) dar ABD hisseleri ve ETF'ler.
-    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA", "AMD",
-    "NFLX", "AVGO", "PLTR", "UBER", "COIN", "SHOP", "CRM", "ORCL",
-    "INTC", "MU", "BAC", "JPM", "XOM", "DIS", "SOFI", "SPY", "QQQ",
-]
+# BIST 100 endeksi (TradingView, Kasım 2026). Endeks her çeyrek güncellenir;
+# değişince config.json içindeki "symbols" listesini güncelle.
+BIST100 = (
+    "AEFES AGHOL AHGAZ AKBNK AKCNS AKFYE AKSA AKSEN ALARK ALBRK ALTNY ANHYT ANSGR "
+    "ARCLK ASELS ASTOR AYGAZ BERA BIMAS BINHO BRSAN BRYAT BTCIM CANTE CCOLA CIMSA "
+    "CVKMD CWENE DOAS DOHOL ECILC ECZYT EGEEN EGGUB EKGYO ENERY ENJSA ENKAI ENTRA "
+    "EREGL EUREN FENER FROTO GARAN GLRMK GLYHO GRSEL GUBRF GWIND HALKB HEKTS ISCTR "
+    "ISDMR ISMEN KARSN KATMR KCAER KCHOL KORDS KRDMD LMKDC MAVI MGROS MPARK OBAMS "
+    "ODAS OTKAR OYAKC PAHOL PETKM PGSUS RGYAS RYSAS SAHOL SASA SISE SNGYO SOKM "
+    "TABGD TAVHL TCELL TCKRC THYAO TKFEN TOASO TRALT TRENJ TRGYO TRMET TSKB TTKOM "
+    "TTRAK TUKAS TUPRS TURSG ULKER VAKBN VESTL YKBNK ZOREN"
+).split()
 
 
 @dataclass
 class Config:
-    # sim   : bilgisayarda sanal para (anahtar gerekmez, Yahoo verisi)
-    # paper : Alpaca'nın sanal hesabı (ücretsiz anahtar gerekir)
-    # live  : GERÇEK PARA (Alpaca canlı hesap)
+    # sim  : bilgisayarda sanal para (Yahoo verisi, hesap gerekmez)
+    # live : GERÇEK PARA (Deniz Yatırım AlgoLab API)
     mode: str = "sim"
 
-    budget_usd: float = 5000.0          # botun kullanabileceği en fazla para
-    position_size_usd: float = 1000.0   # her alımda harcanacak tutar
+    # Tutarlar Türk lirası.
+    budget: float = 50000.0             # botun kullanabileceği en fazla para
+    position_size: float = 10000.0      # her alımda harcanacak tutar
     max_positions: int = 4              # aynı anda en fazla kaç hisse
 
-    max_total_loss_usd: float = 1000.0  # toplam bu kadar zarar ederse bot durur
-    max_daily_loss_usd: float = 300.0   # bir günde bu kadar zarar ederse o gün durur
+    max_total_loss: float = 10000.0     # toplam bu kadar zarar ederse bot durur
+    max_daily_loss: float = 3000.0      # bir günde bu kadar zarar ederse o gün durur
 
     # Videodaki 1.6 oranı: kâr hedefi / zarar kes = 1.6
-    # (Kripto için %16 / %10. Hisseler kriptodan çok daha az oynadığı için
+    # (Kripto için %16 / %10. Hisseler kriptodan daha az oynadığı için
     #  aynı oranı daha küçük yüzdelerle kullanıyoruz.)
     take_profit_pct: float = 4.0
     stop_loss_pct: float = 2.5
 
-    # Tepe kilitleme (trailing): fiyat en az %trail_activate_pct yükselip
-    # hedefe varmadan geri dönerse, tepedeki kârın trail_keep_ratio kadarını
-    # cebe koyup çık. (Videoda: 1000 -> 1100 gördü, 1050'de sat.)
+    # Tepe kilitleme: fiyat en az %trail_activate_pct yükselip hedefe varmadan
+    # geri dönerse, tepedeki kârın trail_keep_ratio kadarını cebe koyup çık.
+    # (Videoda: 1000 -> 1100 gördü, 1050'de sat.)
     trail_activate_pct: float = 2.0
     trail_keep_ratio: float = 0.5
 
@@ -46,35 +52,31 @@ class Config:
     # Giriş sinyali: "düşeni al, dönüşü yakala"
     bar_minutes: int = 5
     lookback_bars: int = 24             # son 2 saat (5 dk x 24)
-    dip_from_high_pct: float = 2.0      # son 2 saatin tepesinden en az %2 düşmüş
+    dip_from_high_pct: float = 2.0      # bugünkü tepeden en az %2 düşmüş
     rsi_period: int = 14
     rsi_buy_below: float = 30.0         # aşırı satılmış
     # dönüş onayı: son kapanan mum yeşil ve öncekinden yüksek kapanmış olmalı
 
     loop_seconds: int = 30
+    session_open: str = "10:00"         # BIST sürekli işlem seansı (İstanbul saati)
+    session_close: str = "18:00"
     no_entry_minutes_after_open: int = 15
     flatten_minutes_before_close: int = 10
 
-    # Komisyon / ücretler. Alpaca'da hisse komisyonu 0 $.
-    # Satışlarda düzenleyici ücretler var (SEC + FINRA TAF), çok küçük.
-    commission_per_trade_usd: float = 0.0
-    commission_pct: float = 0.0         # işlem başı yüzde komisyon (Binance spot ~0.1)
-    sec_fee_rate: float = 0.0000278     # satış tutarı x oran
-    taf_per_share: float = 0.000166     # satılan hisse başı, en fazla 8.30 $
-    slippage_bps: float = 2.0           # sim/backtest'te alış-satış kayması (0.02%)
+    # Komisyon: aracı kurumunun sana verdiği oran (BSMV dahil), işlem başına yüzde.
+    # Örnek: binde 0.5 = 0.05. Kendi oranını yaz, sonuçları çok etkiler.
+    commission_pct: float = 0.05
+    commission_min: float = 0.0         # varsa emir başı en düşük komisyon (TL)
+    slippage_bps: float = 5.0           # sim/backtest'te alış-satış kayması (%0.05)
 
-    # ABD'de 25.000 $ altı marjin hesaplarda 5 iş gününde en fazla 3 gün içi
-    # işlem (PDT kuralı). True ise bot bu sınıra gelince yeni işlem açmaz.
-    respect_pdt: bool = True
-
-    symbols: list = field(default_factory=lambda: list(DEFAULT_SYMBOLS))
+    symbols: list = field(default_factory=lambda: list(BIST100))
     state_dir: str = "bot_data"
 
     def validate(self):
-        if self.mode not in ("sim", "paper", "live"):
-            raise ValueError("mode sim, paper veya live olmalı")
-        if self.position_size_usd > self.budget_usd:
-            raise ValueError("position_size_usd bütçeden büyük olamaz")
+        if self.mode not in ("sim", "live"):
+            raise ValueError("mode sim veya live olmalı")
+        if self.position_size > self.budget:
+            raise ValueError("position_size bütçeden büyük olamaz")
         if self.stop_loss_pct <= 0 or self.take_profit_pct <= 0:
             raise ValueError("kâr al ve zarar kes yüzdeleri pozitif olmalı")
         if not 0 < self.trail_keep_ratio < 1:

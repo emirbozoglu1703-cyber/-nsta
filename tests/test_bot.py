@@ -6,7 +6,7 @@ from unittest import mock
 
 from borsa_bot import strategy as st
 from borsa_bot.config import Config
-from borsa_bot.market import NY
+from borsa_bot.market import TZ
 from borsa_bot.strategy import Bar
 
 
@@ -17,7 +17,7 @@ def cfg(**kw):
     return c
 
 
-def falling_then_bounce(day=datetime(2026, 11, 10, 9, 30, tzinfo=NY), n=40):
+def falling_then_bounce(day=datetime(2026, 11, 10, 10, 0, tzinfo=TZ), n=40):
     """Sürekli düşen, sonda yeşil bir dönüş mumu olan seri."""
     bars, px = [], 100.0
     for i in range(n):
@@ -56,11 +56,12 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(st.exit_reason(1000, 1000, 1010, 60, c), "sure_doldu")
 
     def test_fees(self):
-        c = cfg()
-        self.assertEqual(st.buy_fees(100, 10, c), 0.0)
-        self.assertAlmostEqual(st.sell_fees(100, 10, c), 1000 * c.sec_fee_rate + 10 * c.taf_per_share)
-        c.commission_pct = 0.1
-        self.assertAlmostEqual(st.buy_fees(100, 10, c), 1.0)
+        c = cfg(commission_pct=0.05)
+        self.assertAlmostEqual(st.buy_fees(100, 100, c), 5.0)   # 10.000 TL x binde 0.5
+        self.assertAlmostEqual(st.sell_fees(100, 100, c), 5.0)
+        c.commission_min = 8
+        self.assertAlmostEqual(st.buy_fees(100, 100, c), 8.0)
+        self.assertEqual(st.buy_fees(100, 0, c), 0.0)
 
 
 class ConfigTests(unittest.TestCase):
@@ -72,28 +73,34 @@ class ConfigTests(unittest.TestCase):
             cfg(mode="live").validate()
 
 
+def feed(b, bars, price):
+    b.data.bars = lambda syms, now: {"AAA": bars}
+    b.data.prices = lambda syms: {s: price for s in syms}
+    b._bars_key = None  # yeni mum kapanmış gibi tarama yaptır
+
+
 class BotLoopTests(unittest.TestCase):
     """Sanal modda bir turu sahte saat ve veriyle çalıştırır."""
 
     def test_buy_then_stop_loss_and_daily_limit(self):
         from borsa_bot import bot as botmod
         with tempfile.TemporaryDirectory() as d:
-            c = cfg(state_dir=d, symbols=["AAA"], max_daily_loss_usd=10_000)
+            c = cfg(state_dir=d, symbols=["AAA"], max_daily_loss=10_000_000)
             bars = falling_then_bounce()
             now = bars[-1].t + timedelta(minutes=5, seconds=10)
             px = bars[-1].c
             b = botmod.Bot(c)
-            open_, close = now.replace(hour=9, minute=30), now.replace(hour=16, minute=0)
+            open_, close = now.replace(hour=10, minute=0), now.replace(hour=18, minute=0)
             b.broker.clock = lambda: (True, open_, close)
-            b.data.snapshot = lambda syms, n=None: {"AAA": (bars, px)}
-            with mock.patch.object(botmod, "now_ny", return_value=now):
+            feed(b, bars, px)
+            with mock.patch.object(botmod, "now_tr", return_value=now):
                 b.step()
             pos = b.state.d["positions"]["AAA"]
-            self.assertEqual(pos["qty"], int(c.position_size_usd // (px * (1 + c.slippage_bps / 1e4))))
+            self.assertEqual(pos["qty"], int(c.position_size // (px * (1 + c.slippage_bps / 1e4))))
 
             later = now + timedelta(minutes=10)
-            b.data.snapshot = lambda syms, n=None: {"AAA": (bars, px * 0.97)}
-            with mock.patch.object(botmod, "now_ny", return_value=later):
+            feed(b, bars, px * 0.97)
+            with mock.patch.object(botmod, "now_tr", return_value=later):
                 b.step()
             self.assertNotIn("AAA", b.state.d["positions"])
             self.assertLess(b.state.d["realized_pnl"], 0)
@@ -102,17 +109,17 @@ class BotLoopTests(unittest.TestCase):
     def test_total_loss_limit_halts(self):
         from borsa_bot import bot as botmod
         with tempfile.TemporaryDirectory() as d:
-            c = cfg(state_dir=d, symbols=["AAA"], max_total_loss_usd=1.0, stop_loss_pct=50)
+            c = cfg(state_dir=d, symbols=["AAA"], max_total_loss=1.0, stop_loss_pct=50)
             bars = falling_then_bounce()
             now = bars[-1].t + timedelta(minutes=5, seconds=10)
             px = bars[-1].c
             b = botmod.Bot(c)
-            b.broker.clock = lambda: (True, now.replace(hour=9, minute=30), now.replace(hour=16))
-            b.data.snapshot = lambda syms, n=None: {"AAA": (bars, px)}
-            with mock.patch.object(botmod, "now_ny", return_value=now):
+            b.broker.clock = lambda: (True, now.replace(hour=10, minute=0), now.replace(hour=18))
+            feed(b, bars, px)
+            with mock.patch.object(botmod, "now_tr", return_value=now):
                 b.step()
-            b.data.snapshot = lambda syms, n=None: {"AAA": (bars, px * 0.9)}
-            with mock.patch.object(botmod, "now_ny", return_value=now + timedelta(minutes=1)):
+            feed(b, bars, px * 0.9)
+            with mock.patch.object(botmod, "now_tr", return_value=now + timedelta(minutes=1)):
                 b.step()
             self.assertEqual(b.state.d["halted"], "toplam_limit")
             self.assertEqual(b.state.d["positions"], {})
