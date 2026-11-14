@@ -19,16 +19,47 @@ BIST100 = (
 ).split()
 
 
+FOREX_MAJORS = ["EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "USDJPY", "USDCHF", "USDCAD"]
+
+# market "forex" seçilince config.json'da yazılmayan ayarlar bunlardan gelir.
+# Döviz kurları hisselerden çok daha az oynar, yüzdeler buna göre küçük.
+FOREX_PRESET = {
+    "currency": "USD",
+    "budget": 5000.0,
+    "risk_per_trade": 50.0,
+    "max_positions": 3,
+    "max_total_loss": 1000.0,
+    "max_daily_loss": 300.0,
+    "take_profit_pct": 0.4,
+    "stop_loss_pct": 0.25,
+    "trail_activate_pct": 0.2,
+    "dip_from_high_pct": 0.2,
+    "session_open": "09:00",
+    "session_close": "23:00",
+    "commission_pct": 0.0,
+    "slippage_bps": 0.6,
+    "symbols": FOREX_MAJORS,
+}
+
+
 @dataclass
 class Config:
+    # forex : döviz, MetaTrader 5 hesabın üzerinden
+    # bist  : BIST 100 hisseleri, Deniz Yatırım AlgoLab üzerinden
+    market: str = "bist"
+
     # sim  : bilgisayarda sanal para (Yahoo verisi, hesap gerekmez)
-    # live : GERÇEK PARA (Deniz Yatırım AlgoLab API)
+    # live : GERÇEK PARA (forex: MetaTrader 5, bist: Deniz Yatırım AlgoLab)
     mode: str = "sim"
+    currency: str = "TL"
 
     # Tutarlar Türk lirası.
     budget: float = 50000.0             # botun kullanabileceği en fazla para
     position_size: float = 10000.0      # her alımda harcanacak tutar
     max_positions: int = 4              # aynı anda en fazla kaç hisse
+    # Forex: her işlemde zarar kes'e gelirse kaybedilecek en fazla tutar.
+    # Lot büyüklüğü buna göre hesaplanır. (BIST'te position_size kullanılır.)
+    risk_per_trade: float = 50.0
 
     max_total_loss: float = 10000.0     # toplam bu kadar zarar ederse bot durur
     max_daily_loss: float = 3000.0      # bir günde bu kadar zarar ederse o gün durur
@@ -72,13 +103,21 @@ class Config:
     symbols: list = field(default_factory=lambda: list(BIST100))
     state_dir: str = "bot_data"
 
+    # MetaTrader 5
+    mt5_magic: int = 26111403           # botun emirlerini senin emirlerinden ayıran numara
+    mt5_deviation_points: int = 20      # piyasa emrinde kabul edilen en fazla fiyat kayması
+
     def validate(self):
+        if self.market not in ("forex", "bist"):
+            raise ValueError("market forex veya bist olmalı")
         if self.mode not in ("sim", "live"):
             raise ValueError("mode sim veya live olmalı")
-        if self.position_size > self.budget:
+        if self.market == "bist" and self.position_size > self.budget:
             raise ValueError("position_size bütçeden büyük olamaz")
         if self.stop_loss_pct <= 0 or self.take_profit_pct <= 0:
             raise ValueError("kâr al ve zarar kes yüzdeleri pozitif olmalı")
+        if self.market == "forex" and self.risk_per_trade <= 0:
+            raise ValueError("risk_per_trade pozitif olmalı")
         if not 0 < self.trail_keep_ratio < 1:
             raise ValueError("trail_keep_ratio 0 ile 1 arasında olmalı")
         if self.mode == "live" and os.environ.get("BOT_LIVE_CONFIRM") != "GERCEK_PARA":
@@ -108,13 +147,16 @@ def load_env(path=".env"):
 def load_config(path="config.json"):
     cfg = Config()
     p = Path(path)
-    if p.exists():
-        data = json.loads(p.read_text(encoding="utf-8"))
-        known = set(cfg.to_dict())
-        unknown = set(data) - known
-        if unknown:
-            raise ValueError(f"config.json içinde bilinmeyen ayar(lar): {sorted(unknown)}")
-        for k, v in data.items():
+    data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    unknown = set(data) - set(cfg.to_dict())
+    if unknown:
+        raise ValueError(f"config.json içinde bilinmeyen ayar(lar): {sorted(unknown)}")
+    cfg.market = os.environ.get("BOT_MARKET") or data.get("market") or "forex"
+    if cfg.market == "forex":
+        for k, v in FOREX_PRESET.items():
+            setattr(cfg, k, list(v) if isinstance(v, list) else v)
+    for k, v in data.items():
+        if k != "market":
             setattr(cfg, k, v)
     if os.environ.get("BOT_MODE"):
         cfg.mode = os.environ["BOT_MODE"]

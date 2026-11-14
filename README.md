@@ -1,151 +1,154 @@
-# BIST 100 Borsa Botu
+# Forex Botu (MetaTrader 5)
 
 Onur Naci Öztürkler'in ["Kripto Al-Sat botu yaptım"](https://www.youtube.com/watch?v=xsszspuRYXs)
-videosundaki botun **Borsa İstanbul (BIST 100)** versiyonu. Senin hesabınla,
-Deniz Yatırım'ın AlgoLab API'si üzerinden alım satım yapar.
+videosundaki botun **forex** versiyonu. Yeni bir hesap ya da ürün değil:
+**senin kendi MetaTrader 5 hesabına** bağlanır ve o hesapta alım satım yapar.
 
-> **Yatırım tavsiyesi değildir.** Videonun da söylediği gibi bu bir deney.
-> Aşağıdaki "Dürüst test sonucu" bölümünü okumadan gerçek para koyma.
+Aynı bot BIST 100 için de çalışır (Deniz Yatırım AlgoLab). Bkz. [BIST modu](#bist-modu).
+
+> **Yatırım tavsiyesi değildir.** Forex kaldıraçlıdır; yatırdığın paranın tamamını kaybedebilirsin.
+> Aşağıdaki "Dürüst test sonucu" bölümünü okumadan gerçek hesapta çalıştırma.
+
+## Şifren nerede durur?
+
+- Şifreni **kimseye, hiçbir sohbete ya da yapay zekâya yazma.**
+- Şifre sadece senin bilgisayarındaki `.env` dosyasına yazılır. Bot onu yalnızca kendi bilgisayarındaki MetaTrader 5 programına verir; başka hiçbir yere göndermez.
+- `.env` dosyası git'e girmez (`.gitignore`).
 
 ## Videodaki bot → bu bot
 
-| Videoda (kripto, Binance) | Burada (BIST 100, Deniz Yatırım) |
+| Videoda (kripto) | Burada (forex, MT5) |
 |---|---|
-| 5.000 $ bütçe | `budget: 50000` TL |
-| Düşen coini al, yükselince sat | Bugünkü tepesinden %2+ düşmüş, RSI ≤ 30, yeşil dönüş mumu gelen BIST 100 hissesini al |
-| Kâr al %16, zarar kes %10 (1.6 oranı) | Kâr al %4, zarar kes %2.5. Oran yine 1.6, ama hisseler kriptodan az oynadığı için yüzdeler küçük |
-| Tepe kilidi: 1000→1100 görüp düşerse 1050'de sat | `trail_activate_pct: 2`, `trail_keep_ratio: 0.5`: tepedeki kârın yarısını kilitler |
-| "En fazla 1000 $ kaybet" | `max_total_loss: 10000` TL: aşılırsa her şeyi satar ve durur. Ayrıca günlük limit: 3.000 TL |
-| Önce sanal 5000 $ ile test | `mode: sim`: sanal parayla, gerçek borsaya bağlanmadan |
+| 5.000 $ bütçe | Senin MT5 hesabın, `risk_per_trade: 50` $ |
+| Düşen coini al, yükselince sat | Bugünkü tepesinden %0.2+ düşmüş, RSI ≤ 30, yeşil dönüş mumu gelen pariteyi al |
+| Kâr al %16, zarar kes %10 (1.6 oranı) | Kâr al %0.4, zarar kes %0.25. Oran yine 1.6; kurlar kriptodan çok daha az oynar |
+| Tepe kilidi: 1000→1100 görüp düşerse 1050'de sat | Tepe kilidi: bot zarar kes seviyesini (SL) yukarı taşır, tepedeki kârın yarısını kilitler |
+| "En fazla 1000 $ kaybet" | `max_total_loss: 1000`: aşılırsa her şeyi kapatır ve durur. Günlük limit: 300 $ |
+| Önce sanal parayla test | `BOT_MODE=sim`, ya da kurumunun **demo** MT5 hesabı |
 | Her 30 sn'de kontrol | `loop_seconds: 30` |
 | 15-60 dk tutulan işlemler en iyisi | `max_hold_minutes: 60` |
-| Komisyon kârı yiyor | `commission_pct`: kendi kurum oranını yaz, test her işlemde hesaplar |
-| VPS'te 7/24 | `deploy/borsa-bot.service` |
-| Claude: "10 gün test etmemiz lazım" | `python -m borsa_bot test`: son 60 günle geçmiş testi |
+| Komisyon kârı yiyor | Forex'te maliyet **makas (spread)**: `slippage_bps` ile hesaba katılır |
 
-Ek güvenlikler:
-- Bot sadece **kendi aldığı** lotlara dokunur. Hesabındaki diğer hisseleri satmaz, elinde olan hisseyi tekrar almaz.
-- Seans kapanışından (18:00) 10 dk önce her şeyi satar, ertesi güne pozisyon taşımaz.
-- Açılışın ilk 15 dakikasında işlem açmaz.
-- Gerçek para modu, `.env` dosyasında `BOT_LIVE_CONFIRM=GERCEK_PARA` yazmadan açılmaz.
+Lot büyüklüğünü bot hesaplar: zarar kes'e gelirse en fazla `risk_per_trade` (varsayılan 50 $) kaybedecek kadar lot alır.
+
+## Güvenlik
+
+- **Senin işlemlerine dokunmaz.** Botun her emri bir sihirli numara (`mt5_magic`) taşır. Bot sadece o numaralı pozisyonları yönetir. Senin açık işlemin olan pariteye girmez.
+- **Zarar kes ve kâr al sunucuya yazılır.** Bot ya da bilgisayar kapansa bile korumalar kurumun sunucusunda çalışır.
+- Sadece uzun (alış) pozisyon açar, açığa satış yapmaz.
+- 09:00–23:00 (İstanbul) arası işlem yapar, 22:50'de açık pozisyonları kapatır. Geceye pozisyon taşımaz, swap ödemez.
+- Gerçek hesap modu `.env` dosyasında `BOT_LIVE_CONFIRM=GERCEK_PARA` yazmadan açılmaz.
+- Yatırımcı (salt okunur) şifresiyle girersen bot bunu anlar ve işlem açmaz.
 
 ## Dürüst test sonucu
 
-Son 60 işlem günü, BIST 100'ün 100 hissesi, 5 dakikalık mumlar, işlem başı %0.05 komisyon
-(`python -m borsa_bot test`):
+Son 60 gün, 7 ana parite (EURUSD, GBPUSD, AUDUSD, NZDUSD, USDJPY, USDCHF, USDCAD), 5 dakikalık mumlar,
+yaklaşık 1.2 pip makas (`python -m borsa_bot test`):
 
 | | |
 |---|---|
-| İşlem | 427 |
-| Kazanan | %40 |
-| Ücret öncesi | −5.956 TL |
-| Ödenen komisyon | 4.216 TL |
-| **Net** | **−10.172 TL (−%20.3)** |
+| İşlem | 280 |
+| Kazanan | %54.6 |
+| Makas (spread) maliyeti | 661 $ (net sonuca dahil) |
+| **Net** | **+73.86 $ (+%1.5)** |
+| En büyük düşüş | 361 $ |
 
-- Bot 60 günde bütçesinin %20'sini kaybetti. 10.000 TL toplam zarar limitine takılıp kendini durdurdu, yani limit işe yaradı.
-- 48 farklı ayar denendi (kâr al, zarar kes, tutma süresi, düşüş eşiği, RSI). **Hiçbiri** 60 günün iki yarısında kâr etmedi.
-- Komisyon BİST'te de önemli: zararın yaklaşık %40'ı komisyon.
-- Videodaki bir gecelik kâr büyük ihtimalle şanstı. Videoda Claude da bunu söylüyor.
+Ama:
+- Kârın tamamı tek pariteden (USDJPY, +256 $) geliyor. **USDJPY olmadan sonuç −182 $.**
+- 108 farklı ayar denendi. Sadece 4'ü 60 günün iki yarısında da kâr etti; bu kadarı şansla da olur.
+- Varsayılan ayarlar ilk 30 günde −88 $, son 30 günde +152 $.
+- Aynı strateji BIST'te %20, ABD hisselerinde %5 zarar etti.
 
-Bu yüzden önerilen yol:
-1. Önce `sim` modunda birkaç hafta çalıştır, `bot_data/islemler_sim.csv` dosyasına bak.
-2. `config.json` dosyasında ayarlarla oyna, her seferinde `python -m borsa_bot test` ile dene.
-3. Ancak tutarlı şekilde pozitif sonuç görürsen, küçük bir tutarla `live` dene.
+Yani bu strateji güvenilir şekilde para kazandırmıyor. Önerilen yol:
+1. `sim` modunda birkaç hafta çalıştır.
+2. Kurumunun **demo** MT5 hesabında en az 1 ay çalıştır.
+3. Ancak demo sonuçları tutarlı şekilde pozitifse, gerçek hesapta küçük `risk_per_trade` ile (örneğin 5–10 $) başla.
 
 ## Kurulum
+
+### 1) Sanal mod (her bilgisayarda, hesap gerekmez)
 
 Python 3.9+ gerekir.
 
 ```bash
 git clone <bu repo>
 cd <repo>
-python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv
+.venv\Scripts\activate          # Mac/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-cp config.example.json config.json
-```
-
-### 1) Sanal mod (hesap gerekmez)
-
-```bash
+copy .env.example .env          # Mac/Linux: cp .env.example .env
+copy config.example.json config.json
 python -m borsa_bot test        # son 60 günle geçmiş testi
-python -m borsa_bot calistir    # sanal 50.000 TL ile, seans saatinde çalışır
+python -m borsa_bot calistir    # sanal 5.000 $ ile çalışır
 ```
 
-Sanal mod Yahoo Finance verisini kullanır. Bu veri gecikmeli olabilir, bu yüzden
-sanal sonuçlar gerçek işlemden biraz farklı çıkar.
+### 2) Senin MT5 hesabın (Windows)
 
-### 2) Gerçek para (Deniz Yatırım AlgoLab)
+MetaQuotes'un Python paketi sadece **Windows**'ta çalışır. VPS kullanacaksan Windows VPS al.
 
-1. Deniz Yatırım'da online hesap aç, para yatır.
-2. https://www.algolab.com.tr üzerinden API başvurusu yap, **API anahtarını** al.
-3. Kurumunun komisyon oranını öğren, `config.json` içindeki `commission_pct` alanına yaz.
-   Örnek: binde 0.5 için `0.05`.
-4. `.env` dosyasına yaz:
+1. Kurumunun MetaTrader 5 programını kur, hesabınla giriş yap.
+2. MT5'te üst menüden **Algo Trading** düğmesini aç (yeşil olmalı).
+3. Market Watch'ta paritelerin adlarına bak. Kurumun `EURUSD.m` gibi farklı adlar kullanıyorsa `config.json` içindeki `symbols` listesini aynı adlarla güncelle.
+4. `.env` dosyasını kendi bilgisayarında aç ve doldur:
    ```
+   BOT_MARKET=forex
    BOT_MODE=live
-   ALGOLAB_API_KEY=API-....
+   MT5_LOGIN=hesap numaran
+   MT5_PASSWORD=ana şifren
+   MT5_SERVER=Kurum-Sunucu-Adı
    BOT_LIVE_CONFIRM=GERCEK_PARA
    ```
-5. Giriş yap. TC kimlik no ve şifreni sorar, sonra telefonuna gelen SMS kodunu ister:
-   ```bash
-   python -m borsa_bot giris
-   ```
-   Oturum `bot_data/algolab_oturum.json` dosyasına kaydedilir. Bot oturumu 15 dakikada bir yeniler.
-   Oturum düşerse bot hata yazar ve işlem açmaz; tekrar `giris` yapman gerekir.
-6. `config.json` dosyasında `budget`, `position_size`, `max_total_loss`, `max_daily_loss` değerlerini kendi paranla ayarla.
-7. `python -m borsa_bot calistir`
+   Sunucu adı MT5'teki giriş penceresinde yazar (örneğin `KurumAdi-Demo`).
+5. Önce **demo hesap** bilgileriyle dene. Bot açılışta hesabın DEMO mu GERÇEK mi olduğunu yazar.
+6. `python -m borsa_bot calistir`
 
-Bilmen gerekenler:
-- AlgoLab saniyede yaklaşık 1 isteğe izin veriyor. Bu yüzden bot 100 hissenin mumlarını 5 dakikada bir tarar (yaklaşık 2 dakika sürer). Elindeki hisselerin fiyatına ise her 30 saniyede bakar.
-- Emirler **piyasa emri** olarak gider. Emir 30 saniyede dolmazsa kalan kısmı iptal edilir.
-- AlgoLab bağlantısı belgelere ve açık kaynak örneklere göre yazıldı ve sahte cevaplarla test edildi. **Gerçek bir AlgoLab hesabıyla henüz denenmedi.** İlk gün küçük bir `position_size` ile (örneğin 1.000 TL) başla, emirleri Deniz Yatırım uygulamasından kontrol et.
-- TC kimlik no, şifre ve API anahtarını kimseyle paylaşma, sohbete yapıştırma. `.env` ve `bot_data/` git'e girmez.
+Bot açıkken MT5 programı da açık kalmalı. İşlemleri MT5'teki "İşlem" sekmesinde görürsün; açıklama alanında `borsa_bot` yazar.
 
 ## Komutlar
 
 ```bash
-python -m borsa_bot giris                 # gerçek para: AlgoLab'e SMS ile giriş
 python -m borsa_bot calistir              # botu başlat
 python -m borsa_bot test                  # son 60 günle test
-python -m borsa_bot test --komisyon 0.1   # farklı komisyonla test
 python -m borsa_bot durum                 # kâr/zarar, açık pozisyonlar
-python -m borsa_bot hepsini-sat           # botun aldığı her şeyi hemen sat
+python -m borsa_bot hepsini-sat           # botun açtığı her şeyi hemen kapat
 python -m borsa_bot devam                 # zarar limitiyle duran botu tekrar aç
 ```
 
-Her işlem `bot_data/islemler_<mod>.csv` dosyasına yazılır: zaman, hisse, al/sat, lot, fiyat, komisyon, kâr/zarar, sebep, süre.
+Her işlem `bot_data/islemler_<mod>.csv` dosyasına yazılır.
 
-## Hisse listesi
+## Ayarlar (`config.json`)
 
-`config.json` içindeki `symbols` alanı, Kasım 2026 itibarıyla BIST 100'ün 100 hissesini içerir.
-Endeks her çeyrek değişir. Değiştiğinde listeyi güncelle. Daha az hisseyle de çalışabilirsin,
-örneğin sadece BIST 30.
+| Ayar | Varsayılan | Anlamı |
+|---|---|---|
+| `risk_per_trade` | 50 | Bir işlem zarar kes'e gelirse kaybedilecek en fazla tutar ($) |
+| `max_positions` | 3 | Aynı anda en fazla açık işlem |
+| `max_total_loss` | 1000 | Toplam zarar bunu geçerse bot her şeyi kapatıp durur |
+| `max_daily_loss` | 300 | Günlük zarar bunu geçerse o gün durur |
+| `take_profit_pct` / `stop_loss_pct` | 0.4 / 0.25 | Kâr al / zarar kes (%) |
+| `trail_activate_pct` / `trail_keep_ratio` | 0.2 / 0.5 | Tepe kilidi |
+| `session_open` / `session_close` | 09:00 / 23:00 | İşlem saatleri (İstanbul) |
+| `slippage_bps` | 0.6 | Testte makasın yarısı (0.6 = %0.006, EURUSD'de ~0.6 pip) |
+| `symbols` | 7 ana parite | İşlem yapılacak pariteler |
 
-## VPS'e kurulum (7/24 çalışsın)
+## BIST modu
 
-Videodaki gibi bir VPS kirala (en küçük Ubuntu planı yeterli), sonra:
+Aynı bot BIST 100 hisseleriyle de çalışır:
 
 ```bash
-sudo useradd -r -m -d /opt/borsa-bot borsabot
-sudo -u borsabot git clone <bu repo> /opt/borsa-bot
-cd /opt/borsa-bot
-sudo -u borsabot python3 -m venv .venv
-sudo -u borsabot .venv/bin/pip install -r requirements.txt
-sudo -u borsabot cp .env.example .env            # anahtarı içine yaz
-sudo -u borsabot cp config.example.json config.json
-sudo -u borsabot .venv/bin/python -m borsa_bot giris   # SMS kodunu gir
-sudo cp deploy/borsa-bot.service /etc/systemd/system/
-sudo systemctl enable --now borsa-bot
-journalctl -u borsa-bot -f                       # canlı log
+copy config.bist.example.json config.json
 ```
+
+`.env` içinde `BOT_MARKET=bist` yap. Gerçek hesap için Deniz Yatırım AlgoLab API anahtarı gerekir
+(`ALGOLAB_API_KEY`), giriş `python -m borsa_bot giris` ile SMS koduyla yapılır.
+BIST testinde strateji 60 günde %20 zarar etti.
 
 ## Dosyalar
 
-- `borsa_bot/strategy.py`: alım ve çıkış kuralları
+- `borsa_bot/strategy.py`: alım, çıkış, lot ve kâr/zarar hesapları
 - `borsa_bot/bot.py`: 30 sn'lik ana döngü, zarar limitleri, kayıt
-- `borsa_bot/broker.py`: sanal hesap ve gerçek hesap (AlgoLab) emirleri
-- `borsa_bot/algolab.py`: Deniz Yatırım AlgoLab API istemcisi
-- `borsa_bot/market.py`: fiyat verisi (Yahoo / AlgoLab) ve BIST seans saatleri
+- `borsa_bot/mt5.py`: MetaTrader 5 bağlantısı (forex)
+- `borsa_bot/algolab.py`: Deniz Yatırım AlgoLab bağlantısı (BIST)
+- `borsa_bot/broker.py`: sanal hesap ve AlgoLab emirleri
+- `borsa_bot/market.py`: fiyat verisi ve işlem saatleri
 - `borsa_bot/backtest.py`: geçmiş testi ve rapor
-- `tests/`: `python -m unittest discover -s tests`
+- `tests/`: `python -m unittest`

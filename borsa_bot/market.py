@@ -21,8 +21,9 @@ def hm(s):
 
 
 class SessionClock:
-    """BIST sürekli işlem seansı: hafta içi session_open-session_close.
-    Resmi tatilleri bilmez; tatilde yeni mum gelmediği için bot işlem açmaz."""
+    """Botun işlem saatleri: hafta içi session_open-session_close (İstanbul saati).
+    BIST'te seans, forex'te likit saatler (Londra + New York). Resmi tatilleri
+    bilmez; tatilde yeni mum gelmediği için bot işlem açmaz."""
 
     def __init__(self, cfg):
         self.open_t, self.close_t = hm(cfg.session_open), hm(cfg.session_close)
@@ -44,10 +45,10 @@ def closed_only(bars, now, bar_minutes):
 
 class YahooData:
     """Ücretsiz, hesap gerektirmez. Sanal mod ve geçmiş testi için.
-    Not: Yahoo'nun BIST verisi gecikmeli olabilir; gerçek para modunda
-    AlgoLab verisi kullanılır."""
+    Not: Yahoo verisi gecikmeli olabilir; gerçek para modunda kurumun
+    kendi verisi (MT5 / AlgoLab) kullanılır."""
 
-    URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}.IS"
+    URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -56,7 +57,8 @@ class YahooData:
         self.s.headers.update(UA)
 
     def _chart(self, sym, range_):
-        r = self.s.get(self.URL.format(sym=sym),
+        ysym = f"{sym}=X" if self.cfg.market == "forex" else f"{sym}.IS"
+        r = self.s.get(self.URL.format(sym=ysym),
                        params={"interval": f"{self.cfg.bar_minutes}m", "range": range_},
                        timeout=20)
         r.raise_for_status()

@@ -1,5 +1,5 @@
 """Kullanım:
-    python -m borsa_bot giris              # (gerçek para) AlgoLab'e SMS ile giriş
+    python -m borsa_bot giris              # (BIST gerçek para) AlgoLab'e SMS ile giriş
     python -m borsa_bot calistir           # botu başlat (config.json'daki moda göre)
     python -m borsa_bot test               # son 60 günle geçmiş testi (backtest)
     python -m borsa_bot test --komisyon 0.1  # farklı komisyon oranıyla dene
@@ -30,13 +30,17 @@ def main(argv=None):
         from . import backtest
         if a.komisyon is not None:
             cfg.commission_pct = a.komisyon
-        print(f"{len(cfg.symbols)} BIST hissesinin 5 dk mumları indiriliyor...")
+        what = "paritenin" if cfg.market == "forex" else "BIST hissesinin"
+        print(f"{len(cfg.symbols)} {what} 5 dk mumları indiriliyor...")
         data = backtest.fetch(cfg, a.gun)
         print(backtest.report(cfg, backtest.run(cfg, data)))
         return
 
     from .bot import Bot, State, algolab_client
     if a.komut == "giris":
+        if cfg.market == "forex":
+            print("Forex (MT5) için ayrıca giriş gerekmez: bot .env'deki MT5 bilgileriyle bağlanır.")
+            return
         import getpass
         import os
         client = algolab_client(cfg)

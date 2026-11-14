@@ -127,3 +127,22 @@ class BotLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForexSimTests(unittest.TestCase):
+    def test_leveraged_sim_pnl_and_sizing(self):
+        from borsa_bot.broker import SimBroker
+        from borsa_bot.config import FOREX_PRESET
+        with tempfile.TemporaryDirectory() as d:
+            c = cfg(state_dir=d, market="forex", **{k: v for k, v in FOREX_PRESET.items()
+                                                     if k != "symbols"})
+            # 50$ risk / (1.08 x %0.25) = 18.518 birim -> 18.000 (0.18 lot)
+            self.assertEqual(st.size_qty("EURUSD", 1.08, c), 18000)
+            # USDJPY: kâr yen cinsinden, dolara çevrilir
+            self.assertAlmostEqual(st.pnl_factor("USDJPY", 150.0, c), 1 / 150)
+            b = SimBroker(c)
+            c.slippage_bps = 0
+            b.buy("EURUSD", 18000, 1.0800)
+            self.assertEqual(b.cash(), 5000)          # kaldıraçlı: para bağlanmaz
+            b.sell("EURUSD", 18000, 1.0820)
+            self.assertAlmostEqual(b.cash(), 5000 + 0.002 * 18000)

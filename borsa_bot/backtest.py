@@ -5,7 +5,6 @@ günlerce test etmek lazım. Bu modül, botun aynı kurallarını geçmiş verid
 mum mum oynatır ve dürüst bir rapor verir.
 """
 
-import math
 from collections import defaultdict
 from datetime import timedelta
 
@@ -45,18 +44,23 @@ def run(cfg, data):
     halted_day = None
     equity_curve = []
 
+    lev = st.is_leveraged(cfg)
+
     def close(sym, px, reason, t_close):
         nonlocal cash, realized
         p = positions.pop(sym)
         fill = px * (1 - slip)
         fee = st.sell_fees(fill, p["qty"], cfg)
-        pnl = (fill - p["entry"]) * p["qty"] - fee - p["buy_fee"]
-        cash += fill * p["qty"] - fee
+        gross = (fill - p["entry"]) * p["qty"] * st.pnl_factor(sym, fill, cfg)
+        pnl = gross - fee - p["buy_fee"]
+        cash += (gross - fee) if lev else (fill * p["qty"] - fee)
         realized += pnl
         daily[t_close.date()] += pnl
         last_exit[sym] = t_close
+        spread = p["qty"] * (p["entry"] - p["entry"] / (1 + slip) + px - fill) \
+            * st.pnl_factor(sym, fill, cfg)
         trades.append({"sym": sym, "pnl": pnl, "reason": reason,
-                       "fees": fee + p["buy_fee"],
+                       "fees": fee + p["buy_fee"], "spread": spread,
                        "mins": (t_close - p["t"]).total_seconds() / 60,
                        "day": t_close.date()})
 
@@ -101,7 +105,8 @@ def run(cfg, data):
         for sym, p in positions.items():
             i = idx[sym].get(t)
             if i is not None:
-                unreal += (data[sym][i].c - p["entry"]) * p["qty"]
+                c_ = data[sym][i].c
+                unreal += (c_ - p["entry"]) * p["qty"] * st.pnl_factor(sym, c_, cfg)
         if not halted_total and realized + unreal <= -cfg.max_total_loss:
             for sym in list(positions):
                 i = idx[sym].get(t)
@@ -115,9 +120,12 @@ def run(cfg, data):
                       "gunluk_limit", now)
             halted_day = day
 
-        equity_curve.append(cash + sum(
-            (data[s][idx[s][t]].c if t in idx[s] else p["entry"]) * p["qty"]
-            for s, p in positions.items()))
+        if lev:
+            equity_curve.append(cash + unreal)
+        else:
+            equity_curve.append(cash + sum(
+                (data[s][idx[s][t]].c if t in idx[s] else p["entry"]) * p["qty"]
+                for s, p in positions.items()))
 
         # --- girişler ---
         if halted_total or halted_day == day:
@@ -148,14 +156,15 @@ def run(cfg, data):
         for _, sym, px in cands:
             if len(positions) >= cfg.max_positions:
                 break
-            if invested + cfg.position_size > budget:
+            if not lev and invested + cfg.position_size > budget:
                 break
             fill = px * (1 + slip)
-            qty = math.floor(cfg.position_size / fill)
+            qty = st.size_qty(sym, fill, cfg)
             fee = st.buy_fees(fill, qty, cfg)
-            if qty < 1 or fill * qty + fee > cash:
+            cost = fee if lev else fill * qty + fee
+            if qty <= 0 or cost > cash:
                 continue
-            cash -= fill * qty + fee
+            cash -= cost
             invested += fill * qty
             positions[sym] = {"qty": qty, "entry": fill, "peak": fill, "t": now, "buy_fee": fee}
 
@@ -171,8 +180,9 @@ def report(cfg, res):
     tr = res["trades"]
     lines = []
     p = lines.append
-    p(f"Test süresi: {res['days']} işlem günü, {len(cfg.symbols)} hisse, komisyon %{cfg.commission_pct}")
-    p(f"Başlangıç bütçesi: {cfg.budget:.0f} TL  |  kâr al %{cfg.take_profit_pct}, "
+    unit = "parite" if cfg.market == "forex" else "hisse"
+    p(f"Test süresi: {res['days']} işlem günü, {len(cfg.symbols)} {unit}, komisyon %{cfg.commission_pct}")
+    p(f"Başlangıç bütçesi: {cfg.budget:.0f} {cfg.currency}  |  kâr al %{cfg.take_profit_pct}, "
       f"zarar kes %{cfg.stop_loss_pct}, tepe kilidi %{cfg.trail_activate_pct}")
     if not tr:
         p("Hiç işlem olmadı.")
@@ -181,16 +191,18 @@ def report(cfg, res):
     fees = sum(t["fees"] for t in tr)
     gross = sum(t["pnl"] + t["fees"] for t in tr)
     p(f"İşlem sayısı: {len(tr)}  |  kazanan: %{len(wins) / len(tr) * 100:.1f}")
-    p(f"Ücretler öncesi kâr/zarar: {gross:+.2f} TL")
-    p(f"Ödenen ücret/komisyon:     {fees:.2f} TL")
-    p(f"NET kâr/zarar:             {res['realized']:+.2f} TL  "
+    p(f"Ücretler öncesi kâr/zarar: {gross:+.2f} {cfg.currency}")
+    p(f"Ödenen ücret/komisyon:     {fees:.2f} {cfg.currency}")
+    p(f"Makas/kayma maliyeti:      {sum(t.get('spread', 0) for t in tr):.2f} {cfg.currency} "
+      f"(kâr/zarara zaten dahil)")
+    p(f"NET kâr/zarar:             {res['realized']:+.2f} {cfg.currency}  "
       f"(%{res['realized'] / cfg.budget * 100:+.2f})")
     eq = res["equity_curve"]
     peak, mdd = eq[0], 0.0
     for v in eq:
         peak = max(peak, v)
         mdd = max(mdd, peak - v)
-    p(f"En büyük düşüş (drawdown): {mdd:.2f} TL")
+    p(f"En büyük düşüş (drawdown): {mdd:.2f} {cfg.currency}")
     if res["halted_total"]:
         p("!! Toplam zarar limitine takıldı, bot durdu.")
 
@@ -198,7 +210,7 @@ def report(cfg, res):
     for name, lo, hi in (("0-15 dk", 0, 15), ("15-60 dk", 15, 60.01), ("60+ dk", 60.01, 1e9)):
         g = [t for t in tr if lo <= t["mins"] < hi]
         if g:
-            p(f"  {name:<9} {len(g):>4} işlem  net {sum(t['pnl'] for t in g):+9.2f} TL  "
+            p(f"  {name:<9} {len(g):>4} işlem  net {sum(t['pnl'] for t in g):+9.2f} {cfg.currency}  "
               f"kazanan %{sum(t['pnl'] > 0 for t in g) / len(g) * 100:.0f}")
 
     p("\nÇıkış sebebine göre:")
@@ -206,14 +218,14 @@ def report(cfg, res):
     for t in tr:
         by[t["reason"]].append(t["pnl"])
     for k, v in sorted(by.items(), key=lambda kv: -len(kv[1])):
-        p(f"  {k:<13} {len(v):>4} işlem  net {sum(v):+9.2f} TL")
+        p(f"  {k:<13} {len(v):>4} işlem  net {sum(v):+9.2f} {cfg.currency}")
 
     by_sym = defaultdict(float)
     for t in tr:
         by_sym[t["sym"]] += t["pnl"]
     best = max(by_sym.items(), key=lambda kv: kv[1])
-    p(f"\nEn çok kazandıran: {best[0]} ({best[1]:+.2f} TL). "
-      f"Onsuz net: {res['realized'] - best[1]:+.2f} TL")
+    p(f"\nEn çok kazandıran: {best[0]} ({best[1]:+.2f} {cfg.currency}). "
+      f"Onsuz net: {res['realized'] - best[1]:+.2f} {cfg.currency}")
     if res["realized"] > 0 and best[1] > res["realized"] * 0.5:
-        p("  Uyarı: kârın yarıdan fazlası tek hisseden. Videodaki gibi bu şans olabilir.")
+        p("  Uyarı: kârın yarıdan fazlası tek sembolden. Videodaki gibi bu şans olabilir.")
     return "\n".join(lines)

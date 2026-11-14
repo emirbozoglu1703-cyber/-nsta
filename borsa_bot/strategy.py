@@ -1,4 +1,5 @@
 """Alım ve satım kuralları. Saf fonksiyonlar: hem canlı bot hem backtest kullanır."""
+import math
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -115,3 +116,35 @@ def sell_fees(price, qty, cfg):
 
 def buy_fees(price, qty, cfg):
     return commission(price, qty, cfg)
+
+
+# ---------- piyasaya göre hesaplar ----------
+
+def is_leveraged(cfg):
+    """Forex kaldıraçlı (CFD gibi): alımda paranın tamamı bağlanmaz,
+    hesaba sadece kâr/zarar yansır."""
+    return cfg.market == "forex"
+
+
+def pnl_factor(sym, price, cfg):
+    """Fiyat farkını hesap para birimine çevirir (hesap USD varsayılır).
+    EURUSD gibi ...USD paritelerde 1, USDJPY gibi USD... paritelerde 1/fiyat."""
+    if cfg.market != "forex":
+        return 1.0
+    if sym.endswith("USD"):
+        return 1.0
+    if sym.startswith("USD"):
+        return 1.0 / price
+    raise ValueError(f"{sym}: sanal modda sadece USD içeren pariteler destekleniyor")
+
+
+def size_qty(sym, price, cfg):
+    """Alınacak miktar.
+    BIST: position_size TL'lik lot.
+    Forex: zarar kes'e gelirse en fazla risk_per_trade kaybedecek kadar birim
+    (1000'lik adımlarla = 0.01 lot)."""
+    if cfg.market != "forex":
+        return math.floor(cfg.position_size / price)
+    loss_per_unit = price * cfg.stop_loss_pct / 100 * pnl_factor(sym, price, cfg)
+    units = cfg.risk_per_trade / loss_per_unit
+    return int(units // 1000) * 1000

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from .market import SessionClock, now_tr
-from .strategy import buy_fees, sell_fees
+from .strategy import buy_fees, sell_fees, is_leveraged, pnl_factor
 
 
 class Fill:
@@ -41,16 +41,28 @@ class SimBroker:
         return self.acct["cash"]
 
     def held_qty(self, sym):
-        return self.acct["positions"].get(sym, 0)
+        p = self.acct["positions"].get(sym)
+        return p["qty"] if p else 0
+
+    def user_holds(self, sym):
+        return False
 
     def buy(self, sym, qty, price):
+        # Forex'te slippage_bps alış-satış makasının (spread) yarısıdır.
         px = price * (1 + self.cfg.slippage_bps / 10000)
         fee = buy_fees(px, qty, self.cfg)
-        cost = px * qty + fee
+        # Hisse: paranın tamamı bağlanır. Forex (kaldıraçlı): sadece ücret düşer.
+        cost = fee if is_leveraged(self.cfg) else px * qty + fee
         if cost > self.acct["cash"]:
             return None
         self.acct["cash"] -= cost
-        self.acct["positions"][sym] = self.acct["positions"].get(sym, 0) + qty
+        old = self.acct["positions"].get(sym)
+        if old:
+            q = old["qty"] + qty
+            old["entry"] = (old["entry"] * old["qty"] + px * qty) / q
+            old["qty"] = q
+        else:
+            self.acct["positions"][sym] = {"qty": qty, "entry": px}
         self._save()
         return Fill(qty, px, fee)
 
@@ -58,13 +70,15 @@ class SimBroker:
         qty = min(qty, self.held_qty(sym))
         if qty <= 0:
             return None
+        pos = self.acct["positions"][sym]
         px = price * (1 - self.cfg.slippage_bps / 10000)
         fee = sell_fees(px, qty, self.cfg)
-        self.acct["cash"] += px * qty - fee
-        left = self.acct["positions"][sym] - qty
-        if left:
-            self.acct["positions"][sym] = left
+        if is_leveraged(self.cfg):
+            self.acct["cash"] += (px - pos["entry"]) * qty * pnl_factor(sym, px, self.cfg) - fee
         else:
+            self.acct["cash"] += px * qty - fee
+        pos["qty"] -= qty
+        if pos["qty"] <= 1e-9:
             del self.acct["positions"][sym]
         self._save()
         return Fill(qty, px, fee)
@@ -90,6 +104,10 @@ class AlgoLabBroker:
 
     def held_qty(self, sym):
         return self.c.positions().get(sym, 0)
+
+    def user_holds(self, sym):
+        # Bot bu hisseyi şu an tutmuyorsa (çağrılan yerde zaten öyle), hesaptaki lotlar senindir.
+        return self.held_qty(sym) > 0
 
     def _order(self, sym, qty, side):
         try:

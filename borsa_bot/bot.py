@@ -2,7 +2,6 @@
 
 import csv
 import json
-import math
 import os
 import time
 from datetime import datetime, timedelta
@@ -12,7 +11,7 @@ from . import strategy as st
 from .broker import AlgoLabBroker, SimBroker
 from .market import YahooData, AlgoLabData, now_tr
 
-JOURNAL_FIELDS = ["zaman", "mod", "hisse", "islem", "adet", "fiyat", "ucret",
+JOURNAL_FIELDS = ["zaman", "mod", "sembol", "islem", "adet", "fiyat", "ucret",
                   "kar_zarar", "sebep", "sure_dk"]
 
 
@@ -27,6 +26,11 @@ def algolab_client(cfg):
 def make_clients(cfg):
     if cfg.mode == "sim":
         return SimBroker(cfg), YahooData(cfg)
+    if cfg.market == "forex":
+        from .mt5 import MT5Broker, MT5Client, MT5Data
+        client = MT5Client(cfg)
+        client.connect()
+        return MT5Broker(cfg, client), MT5Data(cfg, client)
     client = algolab_client(cfg)
     client.load_session()
     return AlgoLabBroker(cfg, client), AlgoLabData(cfg, client)
@@ -80,18 +84,31 @@ class Bot:
         return (now - datetime.fromisoformat(pos["entry_time"])).total_seconds() / 60
 
     def _unrealized(self, prices):
+        if hasattr(self.broker, "unrealized"):
+            return self.broker.unrealized(self.state.d["positions"])
         tot = 0.0
         for sym, p in self.state.d["positions"].items():
             if sym in prices:
-                tot += (prices[sym] - p["entry_price"]) * p["qty"]
+                tot += (prices[sym] - p["entry_price"]) * p["qty"] * st.pnl_factor(sym, prices[sym], self.cfg)
         return tot
+
+    def _fmt(self, x):
+        return f"{x:.5f}" if self.cfg.market == "forex" and x < 50 else f"{x:.2f}"
 
     def close_position(self, sym, price, reason, now):
         pos = self.state.d["positions"][sym]
-        fill = self.broker.sell(sym, pos["qty"], price)
+        if "ticket" in pos:
+            fill = self.broker.sell(sym, pos["qty"], price, ticket=pos["ticket"])
+        else:
+            fill = self.broker.sell(sym, pos["qty"], price)
         if fill is None:
             return False
-        pnl = (fill.price - pos["entry_price"]) * fill.qty - fill.fee - pos.get("buy_fee", 0) * (fill.qty / pos["qty"])
+        if getattr(fill, "pnl", None) is not None:   # kurumun hesapladığı net sonuç
+            pnl = fill.pnl
+        else:
+            f = st.pnl_factor(sym, fill.price, self.cfg)
+            pnl = ((fill.price - pos["entry_price"]) * fill.qty * f - fill.fee
+                   - pos.get("buy_fee", 0) * (fill.qty / pos["qty"]))
         held = self._held_minutes(pos, now)
         d = self.state.d
         d["realized_pnl"] += pnl
@@ -106,33 +123,38 @@ class Bot:
             del d["positions"][sym]
         self.state.save()
         self.state.log({"zaman": now.isoformat(timespec="seconds"), "mod": self.cfg.mode,
-                        "hisse": sym, "islem": "SAT", "adet": fill.qty,
+                        "sembol": sym, "islem": "SAT", "adet": fill.qty,
                         "fiyat": round(fill.price, 4), "ucret": round(fill.fee, 4),
                         "kar_zarar": round(pnl, 2), "sebep": reason, "sure_dk": round(held, 1)})
         sign = "+" if pnl >= 0 else ""
-        print(f"  SAT  {sym:<6} {fill.qty:g} lot @ {fill.price:.2f}  {sign}{pnl:.2f} TL  ({reason}, {held:.0f} dk)")
+        print(f"  SAT  {sym:<6} {fill.qty:g} @ {self._fmt(fill.price)}  {sign}{pnl:.2f} {self.cfg.currency}  ({reason}, {held:.0f} dk)")
         return True
 
     def open_position(self, sym, price, sig, now):
-        qty = math.floor(self.cfg.position_size / price)
-        if qty < 1:
+        if hasattr(self.broker, "size"):
+            qty = self.broker.size(sym, price)
+        else:
+            qty = st.size_qty(sym, price, self.cfg)
+        if qty <= 0:
             return False
         fill = self.broker.buy(sym, qty, price)
         if fill is None:
             return False
-        self.state.d["positions"][sym] = {
-            "qty": fill.qty, "entry_price": fill.price, "peak": fill.price,
-            "entry_time": now.isoformat(), "buy_fee": fill.fee}
+        pos = {"qty": fill.qty, "entry_price": fill.price, "peak": fill.price,
+               "entry_time": now.isoformat(), "buy_fee": fill.fee}
+        if getattr(fill, "ticket", None) is not None:
+            pos["ticket"] = fill.ticket
+        self.state.d["positions"][sym] = pos
         self.state.d["fees"] += fill.fee
         self.state.save()
         self.state.log({"zaman": now.isoformat(timespec="seconds"), "mod": self.cfg.mode,
-                        "hisse": sym, "islem": "AL", "adet": fill.qty,
+                        "sembol": sym, "islem": "AL", "adet": fill.qty,
                         "fiyat": round(fill.price, 4), "ucret": round(fill.fee, 4),
                         "kar_zarar": "", "sebep": f"dip %{sig['dip']} rsi {sig['rsi']}",
                         "sure_dk": ""})
-        print(f"  AL   {sym:<6} {fill.qty:g} lot @ {fill.price:.2f}  "
-              f"(düşüş %{sig['dip']}, RSI {sig['rsi']}; hedef {st.target_price(fill.price, self.cfg):.2f}, "
-              f"stop {st.stop_price(fill.price, self.cfg):.2f})")
+        print(f"  AL   {sym:<6} {fill.qty:g} @ {self._fmt(fill.price)}  "
+              f"(düşüş %{sig['dip']}, RSI {sig['rsi']}; hedef {self._fmt(st.target_price(fill.price, self.cfg))}, "
+              f"stop {self._fmt(st.stop_price(fill.price, self.cfg))})")
         return True
 
     def flatten_all(self, prices, reason, now):
@@ -150,9 +172,17 @@ class Bot:
             return False
         self.broker.keep_alive()
 
-        # Açık pozisyonların fiyatı her turda, 100 hissenin mumları ise
+        # Açık pozisyonların fiyatı her turda, tüm sembollerin mumları ise
         # her yeni 5 dk mum kapanınca bir kez çekilir.
         prices = self.data.prices(list(d["positions"])) if d["positions"] else {}
+
+        # 0) Sunucudaki zarar kes / kâr al ile kapanmış olanları kaydet (MT5)
+        if hasattr(self.broker, "is_closed"):
+            for sym in list(d["positions"]):
+                if self.broker.is_closed(d["positions"][sym]):
+                    if not self.close_position(sym, prices.get(sym, 0), "sunucu_sl_tp", now):
+                        print(f"  ! {sym} sunucuda kapanmış ama sonucu okunamadı; kayıttan siliniyor")
+                        del d["positions"][sym]
 
         # 1) Açık pozisyonlar: tepe güncelle, çıkış kurallarını uygula
         mins_to_close = (close - now).total_seconds() / 60
@@ -161,6 +191,9 @@ class Bot:
                 continue
             pos, px = d["positions"][sym], prices[sym]
             pos["peak"] = max(pos["peak"], px)
+            trail = st.trail_price(pos["entry_price"], pos["peak"], cfg)
+            if trail is not None and hasattr(self.broker, "update_stop"):
+                self.broker.update_stop(sym, pos.get("ticket"), trail)
             if mins_to_close <= cfg.flatten_minutes_before_close:
                 reason = "kapanis"
             else:
@@ -173,11 +206,11 @@ class Bot:
         # 2) Zarar limitleri
         unreal = self._unrealized(prices)
         if d["realized_pnl"] + unreal <= -cfg.max_total_loss and d["halted"] != "toplam_limit":
-            print(f"  !!! Toplam zarar limiti ({cfg.max_total_loss:.0f} TL) aşıldı. Her şey satılıyor, bot DURDU.")
+            print(f"  !!! Toplam zarar limiti ({cfg.max_total_loss:.0f} {cfg.currency}) aşıldı. Her şey satılıyor, bot DURDU.")
             self.flatten_all(prices, "toplam_limit", now)
             d["halted"] = "toplam_limit"
         elif daily["pnl"] + unreal <= -cfg.max_daily_loss and not d["halted"]:
-            print(f"  !! Günlük zarar limiti ({cfg.max_daily_loss:.0f} TL) aşıldı. Bugünlük bu kadar.")
+            print(f"  !! Günlük zarar limiti ({cfg.max_daily_loss:.0f} {cfg.currency}) aşıldı. Bugünlük bu kadar.")
             self.flatten_all(prices, "gunluk_limit", now)
             d["halted"] = "gunluk_limit"
         self.state.save()
@@ -227,15 +260,18 @@ class Bot:
         for _, sym, sig in cands:
             if len(d["positions"]) >= cfg.max_positions:
                 break
-            if invested + cfg.position_size > budget or cfg.position_size > cash:
+            if st.is_leveraged(cfg):
+                if cash <= 0:
+                    break
+            elif invested + cfg.position_size > budget or cfg.position_size > cash:
                 break
-            # Kullanıcının kendi elindeki hisselere dokunma.
-            if cfg.mode != "sim" and self.broker.held_qty(sym) > 0:
+            # Kullanıcının kendi açtığı işlemlere / elindeki hisselere dokunma.
+            if cfg.mode != "sim" and self.broker.user_holds(sym):
                 continue
             px = self.data.prices([sym]).get(sym)
             if not px:
                 continue
-            if self.open_position(sym, px, sig, now):
+            if self.open_position(sym, px, sig, now) and not st.is_leveraged(cfg):
                 cost = d["positions"][sym]["qty"] * d["positions"][sym]["entry_price"]
                 invested += cost
                 cash -= cost
@@ -249,14 +285,16 @@ class Bot:
                 g = (prices[sym] / p["entry_price"] - 1) * 100
                 parts.append(f"{sym} {g:+.2f}%")
         halted = f"  [DURDU: {d['halted']}]" if d["halted"] else ""
-        print(f"[{now:%H:%M:%S}] {self.broker.name} | gerçekleşen {d['realized_pnl']:+.2f} TL | "
-              f"bugün {d['daily']['pnl']:+.2f} TL | açık {unreal:+.2f} TL | "
+        c = self.cfg.currency
+        print(f"[{now:%H:%M:%S}] {self.broker.name} | gerçekleşen {d['realized_pnl']:+.2f} {c} | "
+              f"bugün {d['daily']['pnl']:+.2f} {c} | açık {unreal:+.2f} {c} | "
               f"{', '.join(parts) or 'pozisyon yok'}{halted}", flush=True)
 
     # ---------- döngü ----------
     def run(self):
         cfg = self.cfg
-        print(f"BIST botu başladı. Mod: {self.broker.name}, bütçe {cfg.budget:.0f} TL, "
+        what = "Forex" if cfg.market == "forex" else "BIST"
+        print(f"{what} botu başladı. Mod: {self.broker.name}, bütçe {cfg.budget:.0f} {cfg.currency}, "
               f"kâr al %{cfg.take_profit_pct}, zarar kes %{cfg.stop_loss_pct}, "
               f"tepe kilidi %{cfg.trail_activate_pct}/{int(cfg.trail_keep_ratio*100)}%")
         if cfg.mode == "live":
