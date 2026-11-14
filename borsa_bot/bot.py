@@ -8,32 +8,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import strategy as st
-from .broker import AlgoLabBroker, SimBroker
-from .market import YahooData, AlgoLabData, now_tr
+from .broker import SimBroker
+from .market import YahooData, now_tr
 
 JOURNAL_FIELDS = ["zaman", "mod", "sembol", "islem", "adet", "fiyat", "ucret",
                   "kar_zarar", "sebep", "sure_dk"]
 
 
-def algolab_client(cfg):
-    from .algolab import AlgoLab
-    key = os.environ.get("ALGOLAB_API_KEY")
-    if not key:
-        raise SystemExit("ALGOLAB_API_KEY .env dosyasında olmalı.")
-    return AlgoLab(key, Path(cfg.state_dir) / "algolab_oturum.json")
-
-
 def make_clients(cfg):
     if cfg.mode == "sim":
         return SimBroker(cfg), YahooData(cfg)
-    if cfg.market == "forex":
-        from .mt5 import MT5Broker, MT5Client, MT5Data
-        client = MT5Client(cfg)
-        client.connect()
-        return MT5Broker(cfg, client), MT5Data(cfg, client)
-    client = algolab_client(cfg)
-    client.load_session()
-    return AlgoLabBroker(cfg, client), AlgoLabData(cfg, client)
+    from .mt5 import MT5Broker, MT5Client, MT5Data
+    client = MT5Client(cfg)
+    client.connect()
+    return MT5Broker(cfg, client), MT5Data(cfg, client)
 
 
 class State:
@@ -76,7 +64,7 @@ class Bot:
         self.cfg = cfg
         self.broker, self.data = make_clients(cfg)
         self.state = State(cfg)
-        self._bars = {}          # hisse -> kapanmış mumlar (her yeni mumda yenilenir)
+        self._bars = {}          # parite -> kapanmış mumlar (her yeni mumda yenilenir)
         self._bars_key = None
 
     # ---------- yardımcılar ----------
@@ -93,7 +81,7 @@ class Bot:
         return tot
 
     def _fmt(self, x):
-        return f"{x:.5f}" if self.cfg.market == "forex" and x < 50 else f"{x:.2f}"
+        return f"{x:.5f}" if x < 50 else f"{x:.3f}"
 
     def close_position(self, sym, price, reason, now):
         pos = self.state.d["positions"][sym]
@@ -172,7 +160,7 @@ class Bot:
             return False
         self.broker.keep_alive()
 
-        # Açık pozisyonların fiyatı her turda, tüm sembollerin mumları ise
+        # Açık pozisyonların fiyatı her turda, tüm paritelerin mumları ise
         # her yeni 5 dk mum kapanınca bir kez çekilir.
         prices = self.data.prices(list(d["positions"])) if d["positions"] else {}
 
@@ -239,8 +227,6 @@ class Bot:
 
     def _enter(self, bars_by_sym, now):
         cfg, d = self.cfg, self.state.d
-        invested = sum(p["qty"] * p["entry_price"] for p in d["positions"].values())
-        budget = cfg.budget + min(0.0, d["realized_pnl"])  # zarar ettikçe bütçe küçülür
 
         cands = []
         for sym, bars in bars_by_sym.items():
@@ -260,21 +246,15 @@ class Bot:
         for _, sym, sig in cands:
             if len(d["positions"]) >= cfg.max_positions:
                 break
-            if st.is_leveraged(cfg):
-                if cash <= 0:
-                    break
-            elif invested + cfg.position_size > budget or cfg.position_size > cash:
+            if cash <= 0:
                 break
-            # Kullanıcının kendi açtığı işlemlere / elindeki hisselere dokunma.
+            # Senin elle açtığın işlemlerin olduğu pariteye girme.
             if cfg.mode != "sim" and self.broker.user_holds(sym):
                 continue
             px = self.data.prices([sym]).get(sym)
             if not px:
                 continue
-            if self.open_position(sym, px, sig, now) and not st.is_leveraged(cfg):
-                cost = d["positions"][sym]["qty"] * d["positions"][sym]["entry_price"]
-                invested += cost
-                cash -= cost
+            self.open_position(sym, px, sig, now)
 
     def _status(self, prices, now):
         d = self.state.d
@@ -293,8 +273,7 @@ class Bot:
     # ---------- döngü ----------
     def run(self):
         cfg = self.cfg
-        what = "Forex" if cfg.market == "forex" else "BIST"
-        print(f"{what} botu başladı. Mod: {self.broker.name}, bütçe {cfg.budget:.0f} {cfg.currency}, "
+        print(f"Forex botu başladı. Mod: {self.broker.name}, işlem başı risk {cfg.risk_per_trade:.0f} {cfg.currency}, "
               f"kâr al %{cfg.take_profit_pct}, zarar kes %{cfg.stop_loss_pct}, "
               f"tepe kilidi %{cfg.trail_activate_pct}/{int(cfg.trail_keep_ratio*100)}%")
         if cfg.mode == "live":
@@ -309,7 +288,7 @@ class Bot:
             if not active:
                 stamp = now_tr().strftime("%Y-%m-%d %H")
                 if idle_logged != stamp:
-                    print(f"[{now_tr():%Y-%m-%d %H:%M}] Borsa kapalı, bekliyorum...", flush=True)
+                    print(f"[{now_tr():%Y-%m-%d %H:%M}] İşlem saati dışında ({self.cfg.session_open}-{self.cfg.session_close}, hafta içi), bekliyorum...", flush=True)
                     idle_logged = stamp
                 time.sleep(60)
             else:

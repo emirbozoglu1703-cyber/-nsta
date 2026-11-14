@@ -1,10 +1,9 @@
 {
-  "market": "forex",
   "mode": "sim",
   "currency": "USD",
   "budget": 5000.0,
-  "max_positions": 3,
   "risk_per_trade": 50.0,
+  "max_positions": 3,
   "max_total_loss": 1000.0,
   "max_daily_loss": 300.0,
   "take_profit_pct": 0.4,

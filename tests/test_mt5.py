@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from borsa_bot import bot as botmod
-from borsa_bot.config import Config, FOREX_PRESET
+from borsa_bot.config import Config
 from borsa_bot.market import TZ
 from borsa_bot.mt5 import MT5Broker, MT5Client, MT5Data
 
@@ -100,9 +100,7 @@ class FakeMT5:
 
 def fx_cfg(d, **kw):
     c = Config()
-    for k, v in FOREX_PRESET.items():
-        setattr(c, k, list(v) if isinstance(v, list) else v)
-    c.market, c.mode, c.state_dir, c.symbols = "forex", "live", d, ["EURUSD"]
+    c.mode, c.state_dir, c.symbols = "live", d, ["EURUSD"]
     for k, v in kw.items():
         setattr(c, k, v)
     return c

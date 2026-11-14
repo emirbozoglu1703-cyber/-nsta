@@ -1,5 +1,4 @@
 """Alım ve satım kuralları. Saf fonksiyonlar: hem canlı bot hem backtest kullanır."""
-import math
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,7 +37,7 @@ def rsi(closes, period=14):
 def entry_signal(bars, cfg):
     """Kapanmış mumlara bakar. Sinyal varsa {'score':..., 'rsi':..., 'dip':...}, yoksa None.
 
-    Kural (videodaki "düşen coini al" fikrinin hisse hali):
+    Kural (videodaki "düşen coini al" fikrinin forex hali):
       1. Son lookback_bars mumun tepesinden en az dip_from_high_pct düşmüş.
       2. Son birkaç mumdan birinde RSI aşırı satılmış bölgeye (rsi_buy_below) inmiş.
       3. Dönüş onayı: son mum yeşil ve bir öncekinden yüksek kapanmış.
@@ -104,7 +103,7 @@ def trail_price(entry_price, peak_price, cfg):
 
 
 def commission(price, qty, cfg):
-    """Bir alış ya da satışın komisyonu (TL)."""
+    """Bir alış ya da satışın komisyonu (varsa)."""
     if qty <= 0:
         return 0.0
     return max(price * qty * cfg.commission_pct / 100, cfg.commission_min)
@@ -118,19 +117,11 @@ def buy_fees(price, qty, cfg):
     return commission(price, qty, cfg)
 
 
-# ---------- piyasaya göre hesaplar ----------
-
-def is_leveraged(cfg):
-    """Forex kaldıraçlı (CFD gibi): alımda paranın tamamı bağlanmaz,
-    hesaba sadece kâr/zarar yansır."""
-    return cfg.market == "forex"
-
+# ---------- forex hesapları ----------
 
 def pnl_factor(sym, price, cfg):
-    """Fiyat farkını hesap para birimine çevirir (hesap USD varsayılır).
+    """Fiyat farkını hesap para birimine (USD) çevirir.
     EURUSD gibi ...USD paritelerde 1, USDJPY gibi USD... paritelerde 1/fiyat."""
-    if cfg.market != "forex":
-        return 1.0
     if sym.endswith("USD"):
         return 1.0
     if sym.startswith("USD"):
@@ -139,12 +130,8 @@ def pnl_factor(sym, price, cfg):
 
 
 def size_qty(sym, price, cfg):
-    """Alınacak miktar.
-    BIST: position_size TL'lik lot.
-    Forex: zarar kes'e gelirse en fazla risk_per_trade kaybedecek kadar birim
-    (1000'lik adımlarla = 0.01 lot)."""
-    if cfg.market != "forex":
-        return math.floor(cfg.position_size / price)
+    """Sanal mod: zarar kes'e gelirse en fazla risk_per_trade kaybedecek kadar
+    birim (1000'lik adımlarla = 0.01 lot). Gerçek hesapta lotu MT5 hesaplar."""
     loss_per_unit = price * cfg.stop_loss_pct / 100 * pnl_factor(sym, price, cfg)
     units = cfg.risk_per_trade / loss_per_unit
     return int(units // 1000) * 1000

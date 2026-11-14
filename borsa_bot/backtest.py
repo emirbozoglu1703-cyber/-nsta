@@ -44,7 +44,6 @@ def run(cfg, data):
     halted_day = None
     equity_curve = []
 
-    lev = st.is_leveraged(cfg)
 
     def close(sym, px, reason, t_close):
         nonlocal cash, realized
@@ -53,7 +52,7 @@ def run(cfg, data):
         fee = st.sell_fees(fill, p["qty"], cfg)
         gross = (fill - p["entry"]) * p["qty"] * st.pnl_factor(sym, fill, cfg)
         pnl = gross - fee - p["buy_fee"]
-        cash += (gross - fee) if lev else (fill * p["qty"] - fee)
+        cash += gross - fee
         realized += pnl
         daily[t_close.date()] += pnl
         last_exit[sym] = t_close
@@ -120,12 +119,7 @@ def run(cfg, data):
                       "gunluk_limit", now)
             halted_day = day
 
-        if lev:
-            equity_curve.append(cash + unreal)
-        else:
-            equity_curve.append(cash + sum(
-                (data[s][idx[s][t]].c if t in idx[s] else p["entry"]) * p["qty"]
-                for s, p in positions.items()))
+        equity_curve.append(cash + unreal)
 
         # --- girişler ---
         if halted_total or halted_day == day:
@@ -136,8 +130,6 @@ def run(cfg, data):
             continue
         if len(positions) >= cfg.max_positions:
             continue
-        budget = cfg.budget + min(0.0, realized)
-        invested = sum(p["qty"] * p["entry"] for p in positions.values())
         cands = []
         for sym, bars in data.items():
             if sym in positions:
@@ -156,16 +148,12 @@ def run(cfg, data):
         for _, sym, px in cands:
             if len(positions) >= cfg.max_positions:
                 break
-            if not lev and invested + cfg.position_size > budget:
-                break
             fill = px * (1 + slip)
             qty = st.size_qty(sym, fill, cfg)
             fee = st.buy_fees(fill, qty, cfg)
-            cost = fee if lev else fill * qty + fee
-            if qty <= 0 or cost > cash:
+            if qty <= 0 or fee > cash:
                 continue
-            cash -= cost
-            invested += fill * qty
+            cash -= fee
             positions[sym] = {"qty": qty, "entry": fill, "peak": fill, "t": now, "buy_fee": fee}
 
     # kalanları son fiyattan kapat
@@ -180,8 +168,7 @@ def report(cfg, res):
     tr = res["trades"]
     lines = []
     p = lines.append
-    unit = "parite" if cfg.market == "forex" else "hisse"
-    p(f"Test süresi: {res['days']} işlem günü, {len(cfg.symbols)} {unit}, komisyon %{cfg.commission_pct}")
+    p(f"Test süresi: {res['days']} işlem günü, {len(cfg.symbols)} parite, komisyon %{cfg.commission_pct}")
     p(f"Başlangıç bütçesi: {cfg.budget:.0f} {cfg.currency}  |  kâr al %{cfg.take_profit_pct}, "
       f"zarar kes %{cfg.stop_loss_pct}, tepe kilidi %{cfg.trail_activate_pct}")
     if not tr:

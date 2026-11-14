@@ -4,8 +4,6 @@ Onur Naci Öztürkler'in ["Kripto Al-Sat botu yaptım"](https://www.youtube.com/
 videosundaki botun **forex** versiyonu. Yeni bir hesap ya da ürün değil:
 **senin kendi MetaTrader 5 hesabına** bağlanır ve o hesapta alım satım yapar.
 
-Aynı bot BIST 100 için de çalışır (Deniz Yatırım AlgoLab). Bkz. [BIST modu](#bist-modu).
-
 > **Yatırım tavsiyesi değildir.** Forex kaldıraçlıdır; yatırdığın paranın tamamını kaybedebilirsin.
 > Aşağıdaki "Dürüst test sonucu" bölümünü okumadan gerçek hesapta çalıştırma.
 
@@ -19,7 +17,7 @@ Aynı bot BIST 100 için de çalışır (Deniz Yatırım AlgoLab). Bkz. [BIST mo
 
 | Videoda (kripto) | Burada (forex, MT5) |
 |---|---|
-| 5.000 $ bütçe | Senin MT5 hesabın, `risk_per_trade: 50` $ |
+| 5.000 $ bütçe | Senin MT5 hesabın, işlem başı en fazla `risk_per_trade: 50` $ risk |
 | Düşen coini al, yükselince sat | Bugünkü tepesinden %0.2+ düşmüş, RSI ≤ 30, yeşil dönüş mumu gelen pariteyi al |
 | Kâr al %16, zarar kes %10 (1.6 oranı) | Kâr al %0.4, zarar kes %0.25. Oran yine 1.6; kurlar kriptodan çok daha az oynar |
 | Tepe kilidi: 1000→1100 görüp düşerse 1050'de sat | Tepe kilidi: bot zarar kes seviyesini (SL) yukarı taşır, tepedeki kârın yarısını kilitler |
@@ -57,7 +55,7 @@ Ama:
 - Kârın tamamı tek pariteden (USDJPY, +256 $) geliyor. **USDJPY olmadan sonuç −182 $.**
 - 108 farklı ayar denendi. Sadece 4'ü 60 günün iki yarısında da kâr etti; bu kadarı şansla da olur.
 - Varsayılan ayarlar ilk 30 günde −88 $, son 30 günde +152 $.
-- Aynı strateji BIST'te %20, ABD hisselerinde %5 zarar etti.
+- Aynı strateji daha önce denendiğinde BIST'te %20, ABD hisselerinde %5 zarar etti.
 
 Yani bu strateji güvenilir şekilde para kazandırmıyor. Önerilen yol:
 1. `sim` modunda birkaç hafta çalıştır.
@@ -91,7 +89,6 @@ MetaQuotes'un Python paketi sadece **Windows**'ta çalışır. VPS kullanacaksan
 3. Market Watch'ta paritelerin adlarına bak. Kurumun `EURUSD.m` gibi farklı adlar kullanıyorsa `config.json` içindeki `symbols` listesini aynı adlarla güncelle.
 4. `.env` dosyasını kendi bilgisayarında aç ve doldur:
    ```
-   BOT_MARKET=forex
    BOT_MODE=live
    MT5_LOGIN=hesap numaran
    MT5_PASSWORD=ana şifren
@@ -130,25 +127,21 @@ Her işlem `bot_data/islemler_<mod>.csv` dosyasına yazılır.
 | `slippage_bps` | 0.6 | Testte makasın yarısı (0.6 = %0.006, EURUSD'de ~0.6 pip) |
 | `symbols` | 7 ana parite | İşlem yapılacak pariteler |
 
-## BIST modu
+## 7/24 çalıştırma (Windows)
 
-Aynı bot BIST 100 hisseleriyle de çalışır:
-
-```bash
-copy config.bist.example.json config.json
-```
-
-`.env` içinde `BOT_MARKET=bist` yap. Gerçek hesap için Deniz Yatırım AlgoLab API anahtarı gerekir
-(`ALGOLAB_API_KEY`), giriş `python -m borsa_bot giris` ile SMS koduyla yapılır.
-BIST testinde strateji 60 günde %20 zarar etti.
+Bot açık kaldığı sürece çalışır; bilgisayarın ya da Windows VPS'in açık olmalı.
+MT5 programını açık bırak, sonra `deploy\baslat.bat` dosyasına çift tıkla. Bot kapanırsa
+30 saniye sonra kendini yeniden başlatır, çıktıları `bot_data\log.txt` dosyasına yazar.
+Bilgisayar açılınca kendiliğinden başlasın istersen Görev Zamanlayıcı'da
+"oturum açıldığında" bu dosyayı çalıştıran bir görev oluştur.
 
 ## Dosyalar
 
 - `borsa_bot/strategy.py`: alım, çıkış, lot ve kâr/zarar hesapları
+- `deploy/baslat.bat`: Windows'ta botu sürekli çalıştırır
 - `borsa_bot/bot.py`: 30 sn'lik ana döngü, zarar limitleri, kayıt
-- `borsa_bot/mt5.py`: MetaTrader 5 bağlantısı (forex)
-- `borsa_bot/algolab.py`: Deniz Yatırım AlgoLab bağlantısı (BIST)
-- `borsa_bot/broker.py`: sanal hesap ve AlgoLab emirleri
+- `borsa_bot/mt5.py`: MetaTrader 5 bağlantısı (senin hesabın)
+- `borsa_bot/broker.py`: sanal hesap
 - `borsa_bot/market.py`: fiyat verisi ve işlem saatleri
 - `borsa_bot/backtest.py`: geçmiş testi ve rapor
 - `tests/`: `python -m unittest`

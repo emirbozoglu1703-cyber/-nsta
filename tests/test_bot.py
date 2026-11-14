@@ -74,7 +74,7 @@ class ConfigTests(unittest.TestCase):
 
 
 def feed(b, bars, price):
-    b.data.bars = lambda syms, now: {"AAA": bars}
+    b.data.bars = lambda syms, now: {"AAAUSD": bars}
     b.data.prices = lambda syms: {s: price for s in syms}
     b._bars_key = None  # yeni mum kapanmış gibi tarama yaptır
 
@@ -85,36 +85,37 @@ class BotLoopTests(unittest.TestCase):
     def test_buy_then_stop_loss_and_daily_limit(self):
         from borsa_bot import bot as botmod
         with tempfile.TemporaryDirectory() as d:
-            c = cfg(state_dir=d, symbols=["AAA"], max_daily_loss=10_000_000)
+            c = cfg(state_dir=d, symbols=["AAAUSD"], max_daily_loss=10_000_000, risk_per_trade=5000)
             bars = falling_then_bounce()
             now = bars[-1].t + timedelta(minutes=5, seconds=10)
             px = bars[-1].c
             b = botmod.Bot(c)
-            open_, close = now.replace(hour=10, minute=0), now.replace(hour=18, minute=0)
+            open_, close = now.replace(hour=9, minute=0), now.replace(hour=23, minute=0)
             b.broker.clock = lambda: (True, open_, close)
             feed(b, bars, px)
             with mock.patch.object(botmod, "now_tr", return_value=now):
                 b.step()
-            pos = b.state.d["positions"]["AAA"]
-            self.assertEqual(pos["qty"], int(c.position_size // (px * (1 + c.slippage_bps / 1e4))))
+            pos = b.state.d["positions"]["AAAUSD"]
+            self.assertEqual(pos["qty"], st.size_qty("AAAUSD", px, c))
 
             later = now + timedelta(minutes=10)
             feed(b, bars, px * 0.97)
             with mock.patch.object(botmod, "now_tr", return_value=later):
                 b.step()
-            self.assertNotIn("AAA", b.state.d["positions"])
+            self.assertNotIn("AAAUSD", b.state.d["positions"])
             self.assertLess(b.state.d["realized_pnl"], 0)
             self.assertTrue(os.path.exists(b.state.journal))
 
     def test_total_loss_limit_halts(self):
         from borsa_bot import bot as botmod
         with tempfile.TemporaryDirectory() as d:
-            c = cfg(state_dir=d, symbols=["AAA"], max_total_loss=1.0, stop_loss_pct=50)
+            c = cfg(state_dir=d, symbols=["AAAUSD"], max_total_loss=1.0, stop_loss_pct=50,
+                    risk_per_trade=1_000_000)
             bars = falling_then_bounce()
             now = bars[-1].t + timedelta(minutes=5, seconds=10)
             px = bars[-1].c
             b = botmod.Bot(c)
-            b.broker.clock = lambda: (True, now.replace(hour=10, minute=0), now.replace(hour=18))
+            b.broker.clock = lambda: (True, now.replace(hour=9, minute=0), now.replace(hour=23))
             feed(b, bars, px)
             with mock.patch.object(botmod, "now_tr", return_value=now):
                 b.step()
@@ -132,10 +133,8 @@ if __name__ == "__main__":
 class ForexSimTests(unittest.TestCase):
     def test_leveraged_sim_pnl_and_sizing(self):
         from borsa_bot.broker import SimBroker
-        from borsa_bot.config import FOREX_PRESET
         with tempfile.TemporaryDirectory() as d:
-            c = cfg(state_dir=d, market="forex", **{k: v for k, v in FOREX_PRESET.items()
-                                                     if k != "symbols"})
+            c = cfg(state_dir=d)
             # 50$ risk / (1.08 x %0.25) = 18.518 birim -> 18.000 (0.18 lot)
             self.assertEqual(st.size_qty("EURUSD", 1.08, c), 18000)
             # USDJPY: kâr yen cinsinden, dolara çevrilir
