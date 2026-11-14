@@ -1,0 +1,17 @@
+# VPS'te botu 7/24 çalıştırmak için systemd servisi.
+# Kurulum: README.md -> "VPS'e kurulum"
+[Unit]
+Description=Borsa botu
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=borsabot
+WorkingDirectory=/opt/borsa-bot
+ExecStart=/opt/borsa-bot/.venv/bin/python -u -m borsa_bot calistir
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
