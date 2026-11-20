@@ -142,7 +142,8 @@ tr.tik { cursor: pointer; } tr.tik:hover td { background: var(--panel); }
 
   <section>
     <form id="form" autocomplete="off">
-      <input id="kod" placeholder="Hisse kodu: THYAO, ASELS, AAPL…" aria-label="Hisse kodu" maxlength="15">
+      <input id="kod" placeholder="Hisse kodu: THYAO, ASELS, AAPL…" aria-label="Hisse kodu" maxlength="15" list="kodlar">
+      <datalist id="kodlar"></datalist>
       <button class="ana-btn" type="submit">Analiz et</button>
     </form>
     <div class="cipler" id="cipler"></div>
@@ -167,7 +168,7 @@ tr.tik { cursor: pointer; } tr.tik:hover td { background: var(--panel); }
       <li><b>Sonraki haftaya bakılır:</b> o 30 haftanın kaçında hisse 1 hafta sonra yükselmiş, bu oran tahmindir.</li>
       <li><b>Yöntem kendini sınar:</b> geçmişteki 130 haftanın her biri için sadece o haftadan önceki veriyle tahmin yapılır ve gerçekleşenle karşılaştırılır. İsabet, her hafta aynı şeyi söylemekten istatistiksel olarak anlamlı ölçüde iyi değilse sonuç <b>güvenilir değil</b> diye işaretlenir.</li>
     </ol>
-    <p class="kucuk">Kimse bir hissenin gelecek hafta ne yapacağını kesin bilemez. Bu sayfa haber yorumu uydurmaz, dayanaksız yüzdeler vermez; sadece ölçtüğünü gösterir. Yatırım tavsiyesi değildir. Fiyat verisi: Yahoo Finance; Borsa İstanbul fiyatları kaynakta birkaç dakika gecikmeli gelebilir, son işlem saati her zaman kartta yazar. Haberler: Google Haberler. Veriler Firecrawl bağlantın üzerinden çekilir; her analiz 3, her canlı güncelleme 1 kredi harcar.</p>
+    <p class="kucuk">Kimse bir hissenin gelecek hafta ne yapacağını kesin bilemez. Bu sayfa haber yorumu uydurmaz, dayanaksız yüzdeler vermez; sadece ölçtüğünü gösterir. Yatırım tavsiyesi değildir. Fiyat verisi: Yahoo Finance; Borsa İstanbul fiyatları kaynakta birkaç dakika gecikmeli gelebilir, son işlem saati her zaman kartta yazar. Haberler: Google Haberler. BIST 100 ve popüler ABD hisselerinin verileri seans boyunca düzenli olarak yenilenir; sayfa açıkken yeni veriyi kendisi alır. Listede olmayan bir hisse, Claude'a giriş yapılmışsa Firecrawl bağlantısıyla anlık çekilir.</p>
   </section>
 </div>
 
@@ -609,7 +610,7 @@ function fiyatKismi() {
   const acik = piyasaAcik(aktif.gunIci?.meta || v.meta);
   return `
     <div class="fiyat num">${para(dg.fiyat, pb)}<span class="gunluk ${sinif(gun0)}">${yuzde(gun0, 2)} bugün</span></div>
-    <div class="zaman">Son işlem: ${gunSaat(dg.zaman)} · ${acik ? "piyasa açık" : "piyasa kapalı, son kapanış fiyatı"} · sayfa ${saat(Date.now())}'de güncellendi</div>
+    <div class="zaman">Son işlem: ${gunSaat(dg.zaman)} · ${acik ? "piyasa açık" : "piyasa kapalı, son kapanış fiyatı"} · ${aktif.kaynak === "dosya" ? guncellemeYazi() : `güncelleme ${saat(Date.now())}`}</div>
     <div class="degisim">${dg.satirlar.map(([e, d]) => `<div><div class="e">${e}</div><div class="d ${sinif(d)}">${yuzde(d)}</div></div>`).join("")}</div>`;
 }
 function detayCiz() {
@@ -695,10 +696,72 @@ function durumYaz(e) {
 }
 
 let sonKod = "THYAO";
+
+// ---------- hazır veri dosyaları (giriş gerektirmez) ----------
+let dizin = null;            // veri/index.json
+const kisaKod = (k) => k.replace(/\.IS$/, "");
+async function dizinGetir(taze) {
+  if (dizin && !taze) return dizin;
+  try {
+    const r = await fetch("veri/index.json", { cache: "no-store" });
+    if (r.ok) {
+      dizin = await r.json();
+      const dl = $("#kodlar");
+      if (dl) dl.innerHTML = dizin.hisseler.map((h) => `<option value="${esc(h.kod)}">${esc(h.ad)}</option>`).join("");
+    }
+  } catch {}
+  return dizin;
+}
+const listede = (kod) => !!dizin?.hisseler.some((h) => h.kod === kisaKod(kod));
+async function dosyaGetir(kod) {
+  const r = await fetch(`veri/${encodeURIComponent(kisaKod(kod))}.json`, { cache: "no-store" });
+  if (!r.ok) return null;
+  const j = await r.json();
+  const bos = { high: [], low: [], volume: [] };
+  return {
+    gunluk: { ...j.gunluk, ...bos },
+    gunIci: j.gunIci ? { ...j.gunIci, ...bos } : null,
+    analiz: j.analiz, haberler: j.haberler,
+  };
+}
+const guncellemeYazi = () => dizin ? `veri saati ${saat(dizin.guncelleme)}` : "";
+
+function canliDurum() {
+  if (!aktif) return;
+  const acik = piyasaAcik(aktif.gunIci?.meta || aktif.gunluk.meta);
+  if (aktif.kaynak === "canli") canliYaz(acik, acik ? `Canlı · ${saat(Date.now())}` : `Piyasa kapalı · ${saat(Date.now())}`);
+  else canliYaz(acik, acik ? `Piyasa açık · ${saat(dizin?.guncelleme || Date.now())} verisi` : `Piyasa kapalı · ${saat(dizin?.guncelleme || Date.now())} verisi`);
+}
+
 async function goster(kod) {
+  kod = kod.toUpperCase();
   sonKod = kod;
   durumYaz(null);
   clearTimeout(zamanlayici);
+  $("#sonuc").innerHTML = `<div class="iskelet">${esc(kod)} yükleniyor…</div>`;
+  await dizinGetir();
+  // 1) Listedeki hisseler: hazır dosyadan, giriş ve izin gerekmeden.
+  if (listede(kod)) {
+    try {
+      const d = await dosyaGetir(kod);
+      if (d && !d.analiz.hata) {
+        aktif = { kod: kisaKod(kod), gunluk: d.gunluk, gunIci: d.gunIci, analiz: d.analiz, kaynak: "dosya" };
+        aktif.degisim = degisimler(d.gunluk, d.gunIci);
+        aralik = d.gunIci ? "gun" : "1a";
+        detayCiz();
+        haberCiz(d.haberler || []);
+        canliDurum();
+        zamanla();
+        return;
+      }
+    } catch {}
+  }
+  // 2) Listede olmayan hisse: Claude'a giriş yapılmışsa Firecrawl ile anlık.
+  if (!mcp) {
+    $("#sonuc").innerHTML = "";
+    $("#durum").innerHTML = `<div class="uyari sari">"${esc(kod)}" hazır listede yok. Listede BIST 100'ün tamamı ve AAPL, NVDA, MSFT, TSLA, AMZN, GOOGL, META var; yazmaya başlayınca öneriler çıkar.</div>`;
+    return;
+  }
   $("#sonuc").innerHTML = `<div class="iskelet">${esc(kod)} için canlı veri ve 5 yıllık geçmiş çekiliyor, yöntem test ediliyor…</div>`;
   try {
     const gunluk = await gunlukGetir(kod);
@@ -706,17 +769,16 @@ async function goster(kod) {
     if (a.hata) { $("#sonuc").innerHTML = `<div class="uyari sari">${esc(a.hata)}</div>`; return; }
     let gunIci = null;
     try { gunIci = await yahoo(gunluk.meta.symbol, "5m", "5d"); } catch (e) { /* gün içi olmadan da devam */ }
-    aktif = { kod, gunluk, gunIci, analiz: a };
+    aktif = { kod, gunluk, gunIci, analiz: a, kaynak: "canli" };
     aktif.degisim = degisimler(gunluk, gunIci);
     aralik = gunIci ? "gun" : "1a";
     detayCiz();
-    canliYaz(piyasaAcik(gunIci?.meta || gunluk.meta), piyasaAcik(gunIci?.meta || gunluk.meta) ? `Canlı · ${saat(Date.now())}` : `Piyasa kapalı · ${saat(Date.now())}`);
+    canliDurum();
     zamanla();
     haberGetir(gunluk.meta.symbol).then(haberCiz).catch(() => haberCiz([]));
   } catch (e) {
     $("#sonuc").innerHTML = "";
     durumYaz(e);
-    canliYaz(false, "Bağlantı yok");
   }
 }
 
@@ -724,7 +786,14 @@ async function canliGuncelle(elle) {
   if (!aktif) return;
   const btn = $("#yenile"); if (btn) { btn.disabled = true; btn.textContent = "Güncelleniyor…"; }
   try {
-    const gi = await yahoo(aktif.gunluk.meta.symbol, "5m", "5d");
+    let gi = null;
+    if (aktif.kaynak === "dosya") {
+      await dizinGetir(true);
+      const d = await dosyaGetir(aktif.kod);
+      if (d) { aktif.gunluk = d.gunluk; gi = d.gunIci; if (!d.analiz.hata) aktif.analiz = d.analiz; }
+    } else {
+      gi = await yahoo(aktif.gunluk.meta.symbol, "5m", "5d");
+    }
     if (gi) {
       aktif.gunIci = gi;
       aktif.degisim = degisimler(aktif.gunluk, gi);
@@ -732,8 +801,7 @@ async function canliGuncelle(elle) {
       grafikCiz();
     }
     durumYaz(null);
-    const acik = piyasaAcik(gi?.meta);
-    canliYaz(acik, acik ? `Canlı · ${saat(Date.now())}` : `Piyasa kapalı · ${saat(Date.now())}`);
+    canliDurum();
   } catch (e) {
     canliYaz(false, "Güncellenemedi");
     if (elle) durumYaz(e);
@@ -777,12 +845,18 @@ $("#tablo").addEventListener("click", (e) => {
 });
 $("#tara").onclick = async () => {
   const b = $("#tara"); b.disabled = true;
+  await dizinGetir(true);
   for (let i = 0; i < liste.length; i++) {
     b.textContent = `Taranıyor ${i + 1}/${liste.length}…`;
     try {
-      const v = await gunlukGetir(liste[i]);
-      const a = analiz({ t: v.t, close: v.close, high: v.high, low: v.low, volume: v.volume });
-      if (!a.hata) taranan.set(liste[i], { v, a });
+      if (listede(liste[i])) {
+        const d = await dosyaGetir(liste[i]);
+        if (d && !d.analiz.hata) taranan.set(liste[i], { v: d.gunIci ? { ...d.gunluk, meta: { ...d.gunluk.meta, ...d.gunIci.meta } } : d.gunluk, a: d.analiz });
+      } else if (mcp) {
+        const v = await gunlukGetir(liste[i]);
+        const a = analiz({ t: v.t, close: v.close, high: v.high, low: v.low, volume: v.volume });
+        if (!a.hata) taranan.set(liste[i], { v, a });
+      }
     } catch (e) { if (["server_not_connected", "needs_reauth", "not_in_manifest", "blocked_by_policy"].includes(e?.code)) { durumYaz(e); break; } }
     tabloCiz();
   }
@@ -802,20 +876,9 @@ $("#form").onsubmit = (e) => {
 };
 tabloCiz();
 
+// Açılış: hazır veriyle hemen; Claude bağlantısı arka planda (sadece listede olmayan hisseler için).
+goster(sonKod);
 (async () => {
-  mcp = window.claude?.use ? await window.claude.use("mcp") : null;
-  if (!mcp) {
-    $("#sonuc").innerHTML = "";
-    $("#durum").innerHTML = `<div class="uyari sari"><b>Canlı veri için Claude hesabına giriş yapman gerekiyor.</b>
-      <ol style="margin:8px 0 0;padding-left:20px">
-        <li>Sağ üstteki <b>Oturum aç</b>'a dokun ve Claude hesabınla giriş yap.</li>
-        <li>Sayfa yeniden açılınca "Firecrawl" için izin isterse <b>İzin ver</b>'e dokun.</li>
-        <li>Firecrawl bağlı değilse: claude.ai → Ayarlar → Bağlayıcılar → Firecrawl'ı ekle.</li>
-      </ol>
-      <p style="margin:8px 0 0">Fiyatlar ve haberler giriş yaptıktan sonra anında, canlı olarak gelir.</p></div>`;
-    canliYaz(false, "Giriş gerekli");
-    return;
-  }
-  goster(sonKod);
+  try { mcp = window.claude?.use ? await window.claude.use("mcp") : null; } catch { mcp = null; }
 })();
 </script>
