@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hisse Analiz</title>
+  <meta name="description" content="Hisse kodunu yaz: gerçek fiyat verisi, gerçek haberler ve hissenin kendi geçmişine dayanan haftalık yön tahmini, geçmiş isabet oranıyla birlikte.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="ust">
+    <div class="kap">
+      <h1>Hisse Analiz</h1>
+      <p class="alt">Gerçek veri. Tahminin geçmişte ne kadar tuttuğu da yanında.</p>
+    </div>
+  </header>
+
+  <main class="kap">
+    <section class="ara">
+      <form id="form" autocomplete="off">
+        <input id="kod" placeholder="Hisse kodu: THYAO, ASELS, AAPL..." aria-label="Hisse kodu" maxlength="15">
+        <button type="submit">Analiz et</button>
+      </form>
+      <div class="ornekler" id="ornekler"></div>
+    </section>
+
+    <section class="liste" id="listeKutu" hidden>
+      <div class="liste-ust">
+        <h2>Takip listem</h2>
+        <div>
+          <button class="ikincil" id="tara">Hepsini tara</button>
+          <button class="ikincil" id="temizle">Listeyi temizle</button>
+        </div>
+      </div>
+      <div id="tablo"></div>
+    </section>
+
+    <section id="sonuc"></section>
+
+    <section class="nasil">
+      <h2>Tahmin nasıl yapılıyor?</h2>
+      <ol>
+        <li><b>Bugünkü durum ölçülür:</b> son 1, 4 ve 12 haftalık getiri, 50 ve 200 günlük ortalamaya uzaklık, RSI, hacim ve oynaklık.</li>
+        <li><b>Benzer haftalar bulunur:</b> hissenin son 5 yılındaki haftalardan bugüne en çok benzeyen 30 hafta seçilir.</li>
+        <li><b>Sonraki haftaya bakılır:</b> o 30 haftanın kaçında hisse 1 hafta sonra yükselmiş? Bu oran tahmindir.</li>
+        <li><b>Yöntem kendini test eder:</b> geçmişteki 130 hafta için, sadece o haftadan önceki veriyle tahmin yapılır ve gerçekleşenle karşılaştırılır. İsabet, "her hafta yükselir" demekten anlamlı ölçüde iyi değilse sonuç <b>güvenilir değil</b> diye işaretlenir.</li>
+      </ol>
+      <p class="not">Kimse bir hissenin gelecek hafta ne yapacağını kesin bilemez. Bu site haber yorumu uydurmaz, "%88 olumlu" gibi dayanaksız sayılar vermez; sadece ölçtüğünü gösterir. Yatırım tavsiyesi değildir. Veri: Yahoo Finance (gecikmeli olabilir), haberler: Google Haberler.</p>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
