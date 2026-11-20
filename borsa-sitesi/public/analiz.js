@@ -28,7 +28,7 @@ export function rsi(closes, i, n = 14) {
   return 100 - 100 / (1 + g / l);
 }
 
-function rsiSeries(closes, n = 14) {
+export function rsiSeries(closes, n = 14) {
   const out = new Array(closes.length).fill(null);
   if (closes.length <= n) return out;
   let g = 0, l = 0;

@@ -168,7 +168,7 @@ tr.tik { cursor: pointer; } tr.tik:hover td { background: var(--panel); }
       <li><b>Sonraki haftaya bakılır:</b> o 30 haftanın kaçında hisse 1 hafta sonra yükselmiş, bu oran tahmindir.</li>
       <li><b>Yöntem kendini sınar:</b> geçmişteki 130 haftanın her biri için sadece o haftadan önceki veriyle tahmin yapılır ve gerçekleşenle karşılaştırılır. İsabet, her hafta aynı şeyi söylemekten istatistiksel olarak anlamlı ölçüde iyi değilse sonuç <b>güvenilir değil</b> diye işaretlenir.</li>
     </ol>
-    <p class="kucuk">Kimse bir hissenin gelecek hafta ne yapacağını kesin bilemez. Bu sayfa haber yorumu uydurmaz, dayanaksız yüzdeler vermez; sadece ölçtüğünü gösterir. Yatırım tavsiyesi değildir. Fiyat verisi: Yahoo Finance; Borsa İstanbul fiyatları kaynakta birkaç dakika gecikmeli gelebilir, son işlem saati her zaman kartta yazar. Haberler: Google Haberler. BIST 100 ve popüler ABD hisselerinin verileri seans boyunca düzenli olarak yenilenir; sayfa açıkken yeni veriyi kendisi alır. Listede olmayan bir hisse, Claude'a giriş yapılmışsa Firecrawl bağlantısıyla anlık çekilir.</p>
+    <p class="kucuk">Kimse bir hissenin gelecek hafta ne yapacağını kesin bilemez. Bu sayfa haber yorumu uydurmaz, dayanaksız yüzdeler vermez; sadece ölçtüğünü gösterir. Yatırım tavsiyesi değildir. Fiyat verisi: Yahoo Finance; Borsa İstanbul fiyatları kaynakta birkaç dakika gecikmeli gelebilir, son işlem saati her zaman kartta yazar. Haberler: Google Haberler. Borsa İstanbul'daki tüm hisselerin ve popüler ABD hisselerinin verileri seans boyunca düzenli olarak yenilenir; sayfa açıkken yeni veriyi kendisi alır. Listede olmayan bir hisse, Claude'a giriş yapılmışsa Firecrawl bağlantısıyla anlık çekilir.</p>
   </section>
 </div>
 
@@ -370,6 +370,8 @@ window.addEventListener("resize", () => { clearTimeout(window.__rz); window.__rz
 
 // ---------- karar metni ----------
 function kararBilgi(a) {
+  if (!a || !a.tahmin) return { s: "k-gri", pill: ["Tahmin yok", "var(--panel)", "var(--soft)"], b: "Bu hisse için haftalık tahmin yapılamıyor",
+    m: [`${esc(a?.hata || "Yeterli geçmiş veri yok.")} Tahmin yöntemi kendini sınayabilmek için yaklaşık 2,5 yıllık fiyat geçmişi istiyor. Fiyat, değişimler, grafik ve haberler aşağıda.`] };
   const t = a.tahmin, b = a.basari;
   const benzer = `Bugüne en çok benzeyen ${t.n} geçmiş haftada, 1 hafta sonra yükselme oranı: <b>${oran(t.olasilik)}</b> (ortanca hareket ${yuzde(t.medyan)}).`;
   const kayit = (dedi, tuttu, taban, yon) => `Bu yöntem son ${b.testHaftasi} haftada bu hisse için ${dedi} kez "${yon}" dedi; isabet oranı: <b>${oran(tuttu)}</b>. Her hafta "${yon}" demenin isabeti: ${oran(taban)}.`;
@@ -385,6 +387,7 @@ function kararBilgi(a) {
 }
 
 // ---------- detay ----------
+const ortYazi = (f, o) => (o ? (f > o ? "Üstünde" : "Altında") : "–");
 function fiyatKismi() {
   const v = aktif.gunluk, dg = aktif.degisim, pb = v.meta.currency;
   const gun0 = dg.satirlar[2][1];
@@ -396,7 +399,7 @@ function fiyatKismi() {
 }
 function detayCiz() {
   const v = aktif.gunluk, a = aktif.analiz, kisa = v.meta.symbol.replace(/\.IS$/, "");
-  const g = a.bugun, k = kararBilgi(a), b = a.basari, pb = v.meta.currency;
+  const g = a.bugun, k = kararBilgi(a), b = a.basari, pb = v.meta.currency, tahminVar = !!a.tahmin;
   const listede = liste.includes(kisa);
   $("#sonuc").innerHTML = `
   <div style="display:grid;gap:14px">
@@ -424,16 +427,16 @@ function detayCiz() {
         ${k.m.filter(Boolean).map((m) => `<p>${m}</p>`).join("")}
       </div>
       <div class="izgara">
-        <div class="kutu"><div class="e">Benzer haftalarda 1 hafta sonra</div><div class="d">${oran(a.tahmin.olasilik)} yükseldi</div><div class="a">ortanca ${yuzde(a.tahmin.medyan)}</div></div>
-        <div class="kutu"><div class="e">Benzer haftalarda olası aralık</div><div class="d"><span class="down">${yuzde(a.tahmin.kotu)}</span> / <span class="up">${yuzde(a.tahmin.iyi)}</span></div><div class="a">en kötü %10 / en iyi %10</div></div>
-        <div class="kutu"><div class="e">52 hafta zirve / dip</div><div class="d">${para(g.zirve52, pb)}</div><div class="a">zirveye uzaklık ${yuzde(g.zirveyeUzaklik)} · dip ${para(g.dip52, pb)}</div></div>
-        <div class="kutu"><div class="e">50 / 200 günlük ortalama</div><div class="d">${g.fiyat > g.ort50 ? "Üstünde" : "Altında"} / ${g.fiyat > g.ort200 ? "Üstünde" : "Altında"}</div><div class="a">${yuzde(g.fiyat / g.ort50 - 1)} / ${yuzde(g.fiyat / g.ort200 - 1)}</div></div>
-        <div class="kutu"><div class="e">RSI (14 gün)</div><div class="d">${g.rsi.toFixed(0)}</div><div class="a">${g.rsi >= 70 ? "aşırı alım bölgesi" : g.rsi <= 30 ? "aşırı satım bölgesi" : "normal bölge"}</div></div>
-        <div class="kutu"><div class="e">Hacim, son 5 gün</div><div class="d">${sayi(g.hacimOrani)}×</div><div class="a">50 günlük ortalamaya göre</div></div>
+        ${tahminVar ? `<div class="kutu"><div class="e">Benzer haftalarda 1 hafta sonra</div><div class="d">${oran(a.tahmin.olasilik)} yükseldi</div><div class="a">ortanca ${yuzde(a.tahmin.medyan)}</div></div>
+        <div class="kutu"><div class="e">Benzer haftalarda olası aralık</div><div class="d"><span class="down">${yuzde(a.tahmin.kotu)}</span> / <span class="up">${yuzde(a.tahmin.iyi)}</span></div><div class="a">en kötü %10 / en iyi %10</div></div>` : ""}
+        ${g ? `<div class="kutu"><div class="e">52 hafta zirve / dip</div><div class="d">${para(g.zirve52, pb)}</div><div class="a">zirveye uzaklık ${yuzde(g.zirveyeUzaklik)} · dip ${para(g.dip52, pb)}</div></div>
+        <div class="kutu"><div class="e">50 / 200 günlük ortalama</div><div class="d">${ortYazi(g.fiyat, g.ort50)} / ${ortYazi(g.fiyat, g.ort200)}</div><div class="a">${g.ort50 ? yuzde(g.fiyat / g.ort50 - 1) : "–"} / ${g.ort200 ? yuzde(g.fiyat / g.ort200 - 1) : "–"}</div></div>
+        <div class="kutu"><div class="e">RSI (14 gün)</div><div class="d">${g.rsi == null ? "–" : g.rsi.toFixed(0)}</div><div class="a">${g.rsi == null ? "yeterli veri yok" : g.rsi >= 70 ? "aşırı alım bölgesi" : g.rsi <= 30 ? "aşırı satım bölgesi" : "normal bölge"}</div></div>
+        <div class="kutu"><div class="e">Hacim, son 5 gün</div><div class="d">${g.hacimOrani ? sayi(g.hacimOrani) + "×" : "–"}</div><div class="a">50 günlük ortalamaya göre</div></div>` : ""}
       </div>
     </section>
 
-    <section class="kart">
+    ${tahminVar ? `<section class="kart">
       <h3>Bu tahmin ne kadar güvenilir?</h3>
       <div class="tablo-kap"><table>
         <tr><th>Son ${b.testHaftasi} haftalık test</th><th class="s">Kaç kez</th><th class="s">Tuttu</th><th class="s">Her hafta aynısını deseydin</th></tr>
@@ -442,7 +445,7 @@ function detayCiz() {
       </table></div>
       <p class="kucuk">Her geçmiş hafta için tahmin, sadece o haftadan önce bilinen verilerle yapıldı, sonra gerçekleşenle karşılaştırıldı. Yöntem ancak son sütunu anlamlı ölçüde geçiyorsa güvenilir sayılır.</p>
       <p class="kucuk">Bugüne en çok benzeyen haftalar: ${a.tahmin.ornekTarihler.map((o) => `${gun(o.t)} (sonraki hafta <span class="${sinif(o.y)}">${yuzde(o.y)}</span>)`).join(", ")}</p>
-    </section>
+    </section>` : ""}
 
     <section class="kart">
       <h3>Son 7 günün haberleri</h3>
@@ -486,7 +489,9 @@ async function dizinGetir(taze) {
   try {
     const r = await fetch("veri/index.json", { cache: "no-store" });
     if (r.ok) {
-      dizin = await r.json();
+      const yeni = await r.json();
+      if (!dizin || yeni.guncelleme !== dizin.guncelleme) paketler.clear();
+      dizin = yeni;
       const dl = $("#kodlar");
       if (dl) dl.innerHTML = dizin.hisseler.map((h) => `<option value="${esc(h.kod)}">${esc(h.ad)}</option>`).join("");
     }
@@ -494,16 +499,22 @@ async function dizinGetir(taze) {
   return dizin;
 }
 const listede = (kod) => !!dizin?.hisseler.some((h) => h.kod === kisaKod(kod));
+const paketler = new Map();   // paket no -> içerik (dizin yenilenince temizlenir)
+function ac(x, adim) {
+  if (!x) return null;
+  return { meta: x.meta, t: x.d.map((k) => x.t0 + k * adim), close: x.c, high: [], low: [], volume: [] };
+}
 async function dosyaGetir(kod) {
-  const r = await fetch(`veri/${encodeURIComponent(kisaKod(kod))}.json`, { cache: "no-store" });
-  if (!r.ok) return null;
-  const j = await r.json();
-  const bos = { high: [], low: [], volume: [] };
-  return {
-    gunluk: { ...j.gunluk, ...bos },
-    gunIci: j.gunIci ? { ...j.gunIci, ...bos } : null,
-    analiz: j.analiz, haberler: j.haberler,
-  };
+  const h = dizin?.hisseler.find((x) => x.kod === kisaKod(kod));
+  if (!h) return null;
+  if (!paketler.has(h.p)) {
+    const r = await fetch(`veri/p${h.p}.json`, { cache: "no-store" });
+    if (!r.ok) return null;
+    paketler.set(h.p, await r.json());
+  }
+  const j = paketler.get(h.p)[h.kod];
+  if (!j) return null;
+  return { gunluk: ac(j.gunluk, 864e5), gunIci: ac(j.gunIci, 3e5), analiz: j.analiz, haberler: j.haberler };
 }
 const guncellemeYazi = () => dizin ? `veri saati ${saat(dizin.guncelleme)}` : "";
 
@@ -525,7 +536,7 @@ async function goster(kod) {
   if (listede(kod)) {
     try {
       const d = await dosyaGetir(kod);
-      if (d && !d.analiz.hata) {
+      if (d) {
         aktif = { kod: kisaKod(kod), gunluk: d.gunluk, gunIci: d.gunIci, analiz: d.analiz, kaynak: "dosya" };
         aktif.degisim = degisimler(d.gunluk, d.gunIci);
         aralik = d.gunIci ? "gun" : "1a";
@@ -540,7 +551,7 @@ async function goster(kod) {
   // 2) Listede olmayan hisse: Claude'a giriş yapılmışsa Firecrawl ile anlık.
   if (!mcp) {
     $("#sonuc").innerHTML = "";
-    $("#durum").innerHTML = `<div class="uyari sari">"${esc(kod)}" hazır listede yok. Listede BIST 100'ün tamamı ve AAPL, NVDA, MSFT, TSLA, AMZN, GOOGL, META var; yazmaya başlayınca öneriler çıkar.</div>`;
+    $("#durum").innerHTML = `<div class="uyari sari">"${esc(kod)}" bulunamadı. Listede Borsa İstanbul'daki tüm hisseler ve AAPL, NVDA, MSFT, TSLA, AMZN, GOOGL, META var; kodu yazmaya başlayınca öneriler çıkar.</div>`;
     return;
   }
   $("#sonuc").innerHTML = `<div class="iskelet">${esc(kod)} için canlı veri ve 5 yıllık geçmiş çekiliyor, yöntem test ediliyor…</div>`;
@@ -571,7 +582,7 @@ async function canliGuncelle(elle) {
     if (aktif.kaynak === "dosya") {
       await dizinGetir(true);
       const d = await dosyaGetir(aktif.kod);
-      if (d) { aktif.gunluk = d.gunluk; gi = d.gunIci; if (!d.analiz.hata) aktif.analiz = d.analiz; }
+      if (d) { aktif.gunluk = d.gunluk; gi = d.gunIci; aktif.analiz = d.analiz; }
     } else {
       gi = await yahoo(aktif.gunluk.meta.symbol, "5m", "5d");
     }
@@ -602,7 +613,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 function tabloCiz() {
   $("#listeKart").hidden = liste.length === 0;
   if (!liste.length) return;
-  const sirali = [...liste].sort((x, y) => (taranan.get(y)?.a.tahmin.olasilik ?? -1) - (taranan.get(x)?.a.tahmin.olasilik ?? -1));
+  const sirali = [...liste].sort((x, y) => (taranan.get(y)?.a.tahmin?.olasilik ?? -1) - (taranan.get(x)?.a.tahmin?.olasilik ?? -1));
   $("#tablo").innerHTML = `<table>
     <tr><th>Hisse</th><th class="s">Fiyat</th><th class="s">Bugün</th><th class="s gizle">1 hafta</th><th>Gelecek hafta</th><th class="s gizle">Benzer haftalarda yükseliş</th><th></th></tr>
     ${sirali.map((kod) => {
@@ -612,9 +623,9 @@ function tabloCiz() {
       const fiyat = s.v.meta.regularMarketPrice, bugun = fiyat / (s.v.meta.previousClose ?? d.close[n - 2]) - 1;
       return `<tr class="tik" data-kod="${esc(kod)}"><td><b>${esc(kod)}</b></td>
         <td class="s">${para(fiyat, s.v.meta.currency)}</td><td class="s ${sinif(bugun)}">${yuzde(bugun)}</td>
-        <td class="s gizle ${sinif(s.a.bugun.haftalik)}">${yuzde(s.a.bugun.haftalik)}</td>
+        <td class="s gizle ${sinif(s.a.bugun?.haftalik)}">${yuzde(s.a.bugun?.haftalik)}</td>
         <td><span class="pill" style="background:${k.pill[1]};color:${k.pill[2]}">${k.pill[0]}</span></td>
-        <td class="s gizle">${oran(s.a.tahmin.olasilik)}</td>
+        <td class="s gizle">${oran(s.a.tahmin?.olasilik)}</td>
         <td><button class="sil" data-sil="${esc(kod)}" aria-label="${esc(kod)} sil">✕</button></td></tr>`;
     }).join("")}</table>`;
 }
@@ -632,7 +643,7 @@ $("#tara").onclick = async () => {
     try {
       if (listede(liste[i])) {
         const d = await dosyaGetir(liste[i]);
-        if (d && !d.analiz.hata) taranan.set(liste[i], { v: d.gunIci ? { ...d.gunluk, meta: { ...d.gunluk.meta, ...d.gunIci.meta } } : d.gunluk, a: d.analiz });
+        if (d) taranan.set(liste[i], { v: d.gunIci ? { ...d.gunluk, meta: { ...d.gunluk.meta, ...d.gunIci.meta } } : d.gunluk, a: d.analiz });
       } else if (mcp) {
         const v = await gunlukGetir(liste[i]);
         const a = analiz({ t: v.t, close: v.close, high: v.high, low: v.low, volume: v.volume });
