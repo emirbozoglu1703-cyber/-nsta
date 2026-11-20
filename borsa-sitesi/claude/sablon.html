@@ -1,5 +1,6 @@
 <title>Hisse Analiz</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<meta name="color-scheme" content="only light">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap">
@@ -21,8 +22,9 @@
   --warn-soft: #fdf3dd;
   --font-head: "Archivo", "Helvetica Neue", Arial, sans-serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  color-scheme: light;
+  color-scheme: only light;
 }
+html { background: #ffffff; }
 * { box-sizing: border-box; }
 body {
   background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body);
@@ -585,8 +587,14 @@ tabloCiz();
   mcp = window.claude?.use ? await window.claude.use("mcp") : null;
   if (!mcp) {
     $("#sonuc").innerHTML = "";
-    $("#durum").innerHTML = `<div class="uyari sari">Canlı veri bu görünümde açılamıyor. Sayfayı claude.ai'de, Firecrawl bağlantın ekliyken aç.</div>`;
-    canliYaz(false, "Bağlantı yok");
+    $("#durum").innerHTML = `<div class="uyari sari"><b>Canlı veri için Claude hesabına giriş yapman gerekiyor.</b>
+      <ol style="margin:8px 0 0;padding-left:20px">
+        <li>Sağ üstteki <b>Oturum aç</b>'a dokun ve Claude hesabınla giriş yap.</li>
+        <li>Sayfa yeniden açılınca "Firecrawl" için izin isterse <b>İzin ver</b>'e dokun.</li>
+        <li>Firecrawl bağlı değilse: claude.ai → Ayarlar → Bağlayıcılar → Firecrawl'ı ekle.</li>
+      </ol>
+      <p style="margin:8px 0 0">Fiyatlar ve haberler giriş yaptıktan sonra anında, canlı olarak gelir.</p></div>`;
+    canliYaz(false, "Giriş gerekli");
     return;
   }
   goster(sonKod);
