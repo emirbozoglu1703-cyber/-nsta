@@ -26,6 +26,7 @@
 }
 html { background: #ffffff; }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body);
   padding-left: max(16px, env(safe-area-inset-left, 0px));
@@ -124,10 +125,32 @@ tr.tik { cursor: pointer; } tr.tik:hover td { background: var(--panel); }
 .yontem ol { padding-left: 20px; margin: 0; display: grid; gap: 6px; }
 .iskelet { color: var(--soft); padding: 26px 0; }
 
+.sekmeler-ana { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.sekmeler-ana a { padding: 9px 14px; color: var(--soft); text-decoration: none; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.sekmeler-ana a[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); }
+.ozet { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.ozet .kutu .d { font-size: 1.25rem; font-family: var(--font-head); }
+.pform { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr auto; gap: 8px; align-items: end; }
+.pform label { display: grid; gap: 4px; font-size: .78rem; color: var(--soft); font-weight: 500; min-width: 0; }
+.pform input { padding: 10px 12px; font: 500 .95rem var(--font-body); border: 1.5px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); min-width: 0; width: 100%; }
+.pform input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pform #pKod { text-transform: uppercase; }
+.bilgi { font-size: .82rem; color: var(--soft); }
+.mobil { display: none; }
+.pkartlar { display: none; list-style: none; margin: 0; padding: 0; }
+.pkart { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.pkart:last-child { border-bottom: 0; }
+.pkart .sag { text-align: right; font-variant-numeric: tabular-nums; }
+.pkart span { white-space: nowrap; }
+.pkart .kz { font-weight: 700; font-size: 1.05rem; }
+@media (max-width: 560px) { .pkartlar { display: block; } .ptablo { display: none; } }
+@media (max-width: 560px) { .mobil { display: block; } }
+@media (max-width: 720px) { .pform { grid-template-columns: 1fr 1fr; } .pform .ana-btn { grid-column: 1 / -1; } }
 @media (max-width: 560px) {
   form { flex-direction: column; }
   .fiyat { font-size: 1.9rem; }
   .gizle { display: none; }
+  #pTablo th, #pTablo td { padding: 8px 4px; }
 }
 </style>
 
@@ -140,6 +163,32 @@ tr.tik { cursor: pointer; } tr.tik:hover td { background: var(--panel); }
     <span class="canli" id="canli"><span class="nokta"></span><span id="canliYazi">Bağlanıyor…</span></span>
   </header>
 
+  <nav class="sekmeler-ana" aria-label="Bölümler">
+    <a href="#analiz" id="navAnaliz" aria-current="page">Analiz</a>
+    <a href="#profil" id="navProfil">Profilim</a>
+  </nav>
+
+  <div id="profilSayfa" hidden style="display:grid;gap:18px">
+    <section class="ozet" id="pOzet"></section>
+    <section class="kart">
+      <h2 style="margin-bottom:12px">Hisse ekle</h2>
+      <form class="pform" id="pForm" autocomplete="off">
+        <label>Hisse kodu<input id="pKod" list="kodlar" maxlength="15" placeholder="THYAO" required></label>
+        <label>Adet (lot)<input id="pAdet" inputmode="decimal" placeholder="100" required></label>
+        <label>Alış fiyatı<input id="pFiyat" inputmode="decimal" placeholder="0,00" required></label>
+        <label>Alış tarihi<input id="pTarih" type="date"></label>
+        <button class="ana-btn" type="submit" id="pEkleBtn">Profile ekle</button>
+      </form>
+      <p class="bilgi" id="pMesaj">Kodu seçince alış fiyatı kutusuna son fiyat yazılır; kendi alış fiyatını yazabilirsin.</p>
+    </section>
+    <section class="kart">
+      <div class="ust" style="align-items:center"><h2>Hisselerim</h2><span class="bilgi" id="pSaat"></span></div>
+      <div class="tablo-kap" id="pTablo"></div>
+      <p class="bilgi">Profilin sadece bu cihazda, bu tarayıcıda saklanır; başkası göremez. Başka bir cihazda açarsan orada ayrıca eklemen gerekir. Kâr/zarar komisyon ve vergi hariçtir.</p>
+    </section>
+  </div>
+
+  <div id="analizSayfa" style="display:grid;gap:18px">
   <section>
     <form id="form" autocomplete="off">
       <input id="kod" placeholder="Hisse kodu: THYAO, ASELS, AAPL…" aria-label="Hisse kodu" maxlength="15" list="kodlar">
@@ -160,7 +209,9 @@ tr.tik { cursor: pointer; } tr.tik:hover td { background: var(--panel); }
     <div class="tablo-kap" id="tablo"></div>
   </section>
 
-  <section class="yontem">
+  </div>
+
+  <section class="yontem" id="yontem">
     <h2>Tahmin nasıl yapılıyor?</h2>
     <ol>
       <li><b>Bugünkü durum ölçülür:</b> son 1, 4 ve 12 haftalık getiri, 50 ve 200 günlük ortalamaya uzaklık, RSI, hacim ve oynaklık.</li>
@@ -631,6 +682,7 @@ function detayCiz() {
         <div class="sag-btn">
           <button class="ikinci" id="yenile">Şimdi güncelle</button>
           <button class="ikinci" id="ekle">${listede ? "Listede ✓" : "+ Takip listeme ekle"}</button>
+          <button class="ikinci" id="profileEkle">+ Profilime ekle</button>
         </div>
       </div>
       <div id="fiyatKismi">${fiyatKismi()}</div>
@@ -673,6 +725,7 @@ function detayCiz() {
     </section>
   </div>`;
   grafikCiz();
+  $("#profileEkle").onclick = () => { profilFormDoldur(kisa); location.hash = "profil"; };
   $("#ekle").onclick = () => { if (!liste.includes(kisa)) { liste.push(kisa); listeYaz(); } $("#ekle").textContent = "Listede ✓"; taranan.set(kisa, { v, a }); tabloCiz(); };
   $("#yenile").onclick = () => canliGuncelle(true);
   document.querySelectorAll(".sekme").forEach((b) => b.onclick = () => {
@@ -888,6 +941,116 @@ $("#form").onsubmit = (e) => {
 tabloCiz();
 
 // Açılış: hazır veriyle hemen; Claude bağlantısı arka planda (sadece listede olmayan hisseler için).
+// ================= profil =================
+const PLS = "hisse-analiz-profil-v1";
+let profil = (() => { try { return JSON.parse(localStorage.getItem(PLS)) || []; } catch { return []; } })();
+const profilYaz = () => { try { localStorage.setItem(PLS, JSON.stringify(profil)); } catch {} };
+// Adet: nokta binlik ayracıdır (1.000 = bin), virgül ondalık.
+const adetOku = (x) => { const t = String(x).trim().replace(/\s/g, "").replace(/\./g, "").replace(",", "."); const n = Number(t); return isFinite(n) ? n : NaN; };
+// Fiyat: virgül varsa Türkçe (1.234,50); yoksa tek nokta ondalık (5.10), birden çok nokta binlik.
+const sayiOku = (x) => { const t = String(x).trim().replace(/\s/g, ""); const n = Number(t.includes(",") || (t.match(/\./g) || []).length > 1 ? t.replace(/\./g, "").replace(",", ".") : t); return isFinite(n) ? n : NaN; };
+const fiyatBul = (kod) => dizin?.hisseler.find((h) => h.kod === kod) || null;
+const tl = (x, pb) => (x == null || !isFinite(x) ? "–" : `${x > 0 ? "+" : x < 0 ? "−" : ""}${sayi(Math.abs(x))}${pb === "USD" ? " $" : " ₺"}`);
+
+function profilFormDoldur(kod) {
+  $("#pKod").value = kod;
+  const h = fiyatBul(kod);
+  if (h) $("#pFiyat").value = sayi(h.fiyat, h.fiyat < 10 ? 3 : 2).replace(/\./g, "");
+  $("#pAdet").focus();
+}
+$("#pKod").addEventListener("change", () => {
+  const kod = $("#pKod").value.trim().toUpperCase();
+  const h = fiyatBul(kod);
+  if (h && !$("#pFiyat").value) $("#pFiyat").value = sayi(h.fiyat, h.fiyat < 10 ? 3 : 2).replace(/\./g, "");
+});
+$("#pForm").onsubmit = (e) => {
+  e.preventDefault();
+  const kod = $("#pKod").value.trim().toUpperCase().replace(/\.IS$/, "");
+  const adet = adetOku($("#pAdet").value), fiyat = sayiOku($("#pFiyat").value);
+  const m = $("#pMesaj");
+  if (!fiyatBul(kod)) { m.textContent = `"${kod}" listede bulunamadı. Kodu yazmaya başlayınca öneriler çıkar.`; m.style.color = "var(--down)"; return; }
+  if (!(adet > 0) || !(fiyat > 0)) { m.textContent = "Adet ve alış fiyatı sıfırdan büyük bir sayı olmalı."; m.style.color = "var(--down)"; return; }
+  profil.push({ id: Date.now().toString(36), kod, adet, fiyat, tarih: $("#pTarih").value || new Date().toLocaleDateString("en-CA", TZ) });
+  profilYaz();
+  m.textContent = `${kod} eklendi: ${sayi(adet, 0)} adet, ${sayi(fiyat)} alış.`; m.style.color = "var(--up)";
+  $("#pForm").reset();
+  profilCiz();
+};
+$("#pTablo").addEventListener("click", (e) => {
+  const sil = e.target.closest("[data-psil]");
+  if (sil) { profil = profil.filter((x) => x.id !== sil.dataset.psil); profilYaz(); profilCiz(); return; }
+  const tr = e.target.closest("[data-kod]");
+  if (tr) { location.hash = "analiz"; goster(tr.dataset.kod); window.scrollTo({ top: 0, behavior: "smooth" }); }
+});
+
+function profilCiz() {
+  const satir = profil.map((x) => {
+    const h = fiyatBul(x.kod);
+    const son = h?.fiyat ?? null, pb = h?.pb || "TRY";
+    const maliyet = x.adet * x.fiyat, deger = son != null ? x.adet * son : null;
+    const kz = deger != null ? deger - maliyet : null;
+    const gunluk = son != null && h.bugun != null ? x.adet * (son - son / (1 + h.bugun)) : null;
+    return { ...x, son, pb, bugun: h?.bugun, maliyet, deger, kz, kzO: kz != null ? kz / maliyet : null, gunluk };
+  });
+  // Özet (para birimine göre)
+  const pbler = [...new Set(satir.map((r) => r.pb))];
+  if (!pbler.length) pbler.push("TRY");
+  $("#pOzet").innerHTML = pbler.map((pb) => {
+    const r = satir.filter((x) => x.pb === pb);
+    const mal = r.reduce((s, x) => s + x.maliyet, 0), deg = r.reduce((s, x) => s + (x.deger ?? x.maliyet), 0);
+    const kz = deg - mal, gun = r.reduce((s, x) => s + (x.gunluk || 0), 0);
+    const ek = pbler.length > 1 ? (pb === "USD" ? " ($)" : " (₺)") : "";
+    return `
+      <div class="kutu"><div class="e">Toplam maliyet${ek}</div><div class="d num">${para(mal, pb)}</div><div class="a">${r.length} kayıt</div></div>
+      <div class="kutu"><div class="e">Güncel değer${ek}</div><div class="d num">${para(deg, pb)}</div><div class="a">son fiyatlarla</div></div>
+      <div class="kutu"><div class="e">Toplam kâr / zarar${ek}</div><div class="d num ${sinif(kz)}">${tl(kz, pb)}</div><div class="a ${sinif(kz)}">${mal ? yuzde(kz / mal, 2) : "–"}</div></div>
+      <div class="kutu"><div class="e">Bugünkü değişim${ek}</div><div class="d num ${sinif(gun)}">${tl(gun, pb)}</div><div class="a">son seansa göre</div></div>`;
+  }).join("");
+  $("#pSaat").textContent = dizin ? `Son fiyatlar: ${gunSaat(dizin.guncelleme)}` : "";
+  $("#pTablo").innerHTML = !satir.length
+    ? `<p class="bilgi" style="padding:14px 0">Henüz hisse eklemedin. Yukarıdaki formdan hisse kodunu, adedini ve alış fiyatını yaz.</p>`
+    : `<ul class="pkartlar">${satir.map((r) => `<li class="pkart" data-kod="${esc(r.kod)}">
+        <div><b>${esc(r.kod)}</b> <span class="bilgi">${sayi(r.adet, r.adet % 1 ? 2 : 0)} adet</span>
+          <div class="bilgi">alış ${para(r.fiyat, r.pb)} · son ${para(r.son, r.pb)} <span class="${sinif(r.bugun)}">${yuzde(r.bugun, 2)}</span></div>
+          <div class="bilgi">değer ${para(r.deger, r.pb)}</div></div>
+        <div class="sag"><div class="kz ${sinif(r.kz)}">${tl(r.kz, r.pb)}</div><div class="bilgi ${sinif(r.kz)}">${yuzde(r.kzO, 2)}</div>
+          <button class="sil" data-psil="${esc(r.id)}" aria-label="${esc(r.kod)} kaydını sil">✕</button></div>
+      </li>`).join("")}</ul>
+    <table class="ptablo">
+      <tr><th>Hisse</th><th class="s">Adet</th><th class="s gizle">Alış</th><th class="s">Son fiyat</th><th class="s gizle">Maliyet</th><th class="s gizle">Değer</th><th class="s">Kâr / zarar</th><th></th></tr>
+      ${satir.map((r) => `<tr class="tik" data-kod="${esc(r.kod)}">
+        <td><b>${esc(r.kod)}</b><div class="bilgi">${r.tarih ? esc(gun(new Date(r.tarih + "T12:00:00+03:00").getTime())) : ""}</div></td>
+        <td class="s">${sayi(r.adet, r.adet % 1 ? 2 : 0)}<div class="bilgi mobil">alış ${para(r.fiyat, r.pb)}</div></td>
+        <td class="s gizle">${para(r.fiyat, r.pb)}</td>
+        <td class="s">${para(r.son, r.pb)}<div class="bilgi ${sinif(r.bugun)}">${yuzde(r.bugun, 2)} bugün</div></td>
+        <td class="s gizle">${para(r.maliyet, r.pb)}</td>
+        <td class="s gizle">${para(r.deger, r.pb)}</td>
+        <td class="s ${sinif(r.kz)}"><b>${tl(r.kz, r.pb)}</b><div class="bilgi ${sinif(r.kz)}">${yuzde(r.kzO, 2)}</div></td>
+        <td><button class="sil" data-psil="${esc(r.id)}" aria-label="${esc(r.kod)} kaydını sil">✕</button></td></tr>`).join("")}
+    </table>`;
+}
+
+// Fiyatlar her 2 dakikada bir yeniden okunur (sayfa görünürken).
+setInterval(async () => {
+  if (document.visibilityState !== "visible") return;
+  const once = dizin?.guncelleme;
+  await dizinGetir(true);
+  if (dizin?.guncelleme !== once) { if (!$("#profilSayfa").hidden) profilCiz(); if (aktif?.kaynak === "dosya") canliGuncelle(false); }
+}, YENILEME_MS);
+
+// ---------- bölüm geçişi (#analiz / #profil) ----------
+function bolum() {
+  const prof = location.hash === "#profil";
+  $("#profilSayfa").hidden = !prof;
+  $("#analizSayfa").hidden = prof;
+  $("#yontem").hidden = prof;
+  $("#navProfil").toggleAttribute("aria-current", prof); if (prof) $("#navProfil").setAttribute("aria-current", "page");
+  $("#navAnaliz").toggleAttribute("aria-current", !prof); if (!prof) $("#navAnaliz").setAttribute("aria-current", "page");
+  if (prof) dizinGetir().then(profilCiz);
+}
+window.addEventListener("hashchange", bolum);
+bolum();
+
 goster(sonKod);
 (async () => {
   try { mcp = window.claude?.use ? await window.claude.use("mcp") : null; } catch { mcp = null; }
